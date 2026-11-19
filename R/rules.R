@@ -1,9 +1,4 @@
-# Definitions shared by the data build, model fitting and the simulator.
-suppressMessages({
-  library(data.table)
-  library(arrow)
-  library(xgboost)
-})
+# Definitions shared by the data pipeline (data-raw/), model fitting and the simulator.
 
 # What can end a segment (a team's turn with the ball, until a shot / turnover / foul / period end)
 OUTCOMES <- c("fg2_make", "fg2_miss", "fg3_make", "fg3_miss", "fg2_and1", "fg3_and1",

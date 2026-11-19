@@ -3,11 +3,12 @@
 #   2. final-margin distribution (tests late-game fouling / clock management)
 #   3. win-probability calibration: simulate held-out games forward from real mid-game states
 #   4. close late-game states: does the sim send the right share of games to overtime?
-source("sim.R")
+# Run from the package root. Loads the package code (rules, feature builders, simulator).
+devtools::load_all(quiet = TRUE)
+suppressMessages({ library(data.table); library(arrow); library(xgboost) })
 set.seed(7)
-m <- load_models()
-seg <- as.data.table(read_parquet("data/segments.parquet"))
-dir.create("output", showWarnings = FALSE)
+seg <- as.data.table(read_parquet("data-raw/data/segments.parquet"))
+dir.create("data-raw/output", showWarnings = FALSE)
 
 # ---- 1. per-game totals ----
 actual <- seg[, .(total = final_total[1], margin = abs(final_margin[1]), ot = max(period) > 4,
@@ -18,7 +19,7 @@ actual <- seg[, .(total = final_total[1], margin = abs(final_margin[1]), ot = ma
                   timeouts = sum(after_timeout)), by = game_id]
 
 t0 <- Sys.time()
-sim <- game_summary(simulate_games(new_games(5000), m))
+sim <- game_summary(simulate_games(new_games(5000)))
 cat("simulated 5000 games in", round(as.numeric(Sys.time() - t0, units = "secs")), "s\n")
 sim[, `:=`(total = score1 + score2, margin = abs(score1 - score2), ot = periods > 4)]
 
@@ -38,10 +39,10 @@ marg <- data.table(margin = k,
 cat("\nFinal margin distribution (first 12)\n"); print(marg[1:12], digits = 3)
 
 # ---- 3. win-probability calibration from held-out mid-game states ----
-test_games <- readRDS("models/test_games.rds")
+test_games <- readRDS("data-raw/data/test_games.rds")
 states <- seg[game_id %in% test_games & period <= 4 & final_margin != 0][sample(.N, 2000)]
 reps <- 100
-g <- simulate_games(games_from_states(states, reps), m)
+g <- simulate_games(games_from_states(states, reps))
 states[, `:=`(
   wp_sim     = colMeans(matrix(g$score[, 1] > g$score[, 2], nrow = reps)),
   margin_sim = colMeans(matrix(g$score[, 1] - g$score[, 2], nrow = reps)),
@@ -64,13 +65,13 @@ cat(sprintf("  Q4 last 5:00 only (n = %d): Brier %.4f\n", nrow(late), brier(late
 seg[, went_ot := max(period) > 4, by = game_id]
 close <- seg[game_id %in% test_games & period == 4 & secs_left <= 120 & abs(score_diff) <= 3]
 reps <- 50
-g <- simulate_games(games_from_states(close, reps), m)
+g <- simulate_games(games_from_states(close, reps))
 close[, sim_ot := colMeans(matrix(g$period > 4, nrow = reps))]
 cat("\nOvertime rate from Q4 states with <= 2:00 left, by offense's score margin\n")
 print(close[, .(n = .N, actual = mean(went_ot), sim = mean(sim_ot)), keyby = score_diff], digits = 3)
 
 # ---- plots ----
-png("output/validation.png", width = 1400, height = 500, res = 110)
+png("data-raw/output/validation.png", width = 1400, height = 500, res = 110)
 par(mfrow = c(1, 3))
 plot(marg$margin, marg$actual, type = "h", lwd = 6, col = "grey70", xlab = "final margin",
      ylab = "share of games", main = "Final margin: actual (bars) vs sim (line)")
@@ -83,4 +84,4 @@ hist(actual$total, breaks = seq(r[1] - 5, r[2] + 5, 5), col = rgb(.5, .5, .5, .5
      main = "Game total: actual (grey) vs sim (blue)", xlab = "total points")
 hist(sim$total, breaks = seq(r[1] - 5, r[2] + 5, 5), col = rgb(.27, .51, .71, .4), freq = FALSE, add = TRUE)
 dev.off()
-cat("\nplots saved to output/validation.png\n")
+cat("\nplots saved to data-raw/output/validation.png\n")

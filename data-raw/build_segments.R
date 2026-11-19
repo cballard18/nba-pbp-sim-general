@@ -1,9 +1,11 @@
 # Turn raw play-by-play into one row per segment: a team's turn with the ball that ends in a
 # shot, turnover, defensive foul, or the end of the period. An offensive rebound or a side-out
 # foul starts a new segment for the same team.
-source("common.R")
+# Run from the package root. Loads the package code (rules, feature builders, simulator).
+devtools::load_all(quiet = TRUE)
+suppressMessages({ library(data.table); library(arrow); library(xgboost) })
 
-p <- as.data.table(read_parquet("data/pbp.parquet"))
+p <- as.data.table(read_parquet("data-raw/data/pbp.parquet"))
 p <- p[season >= 2017]  # 2016 has no off_team_abb
 setorder(p, game_id, number_event)
 
@@ -136,11 +138,11 @@ keep <- c("season", "game_id", "period", "secs_left", "end_secs", "score_diff", 
           "def_fouls", "def_fouls_l2", "outcome", "duration", "n_ft", "last_ft_made", "shot_kind",
           "oreb", "final_margin", "final_total", "tip_off")
 seg <- seg[, ..keep]
-write_parquet(seg, "data/segments.parquet")
+write_parquet(seg, "data-raw/data/segments.parquet")
 
 # FT make rate (all non-technical free throws)
 fts <- p[msg_type == 3 & !act_type %in% c(16, 21, 22)]
-saveRDS(list(ft_pct = fts[, mean(!grepl("miss", description, ignore.case = TRUE))]), "data/constants.rds")
+saveRDS(list(ft_pct = fts[, mean(!grepl("miss", description, ignore.case = TRUE))]), "data-raw/data/constants.rds")
 
 cat("segments:", nrow(seg), " games:", uniqueN(seg$game_id), "\n")
 print(round(prop.table(table(seg$outcome)), 4))

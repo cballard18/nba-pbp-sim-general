@@ -5,10 +5,12 @@
 #   4. rebounds  - offensive rebound rate after a miss, by shot type           (league rate)
 #   5. free throws - league FT%                                                 (league rate)
 # Games are split 85/15; held-out log loss is reported against a no-feature baseline.
-source("common.R")
+# Run from the package root. Loads the package code (rules, feature builders, simulator).
+devtools::load_all(quiet = TRUE)
+suppressMessages({ library(data.table); library(arrow); library(xgboost) })
 set.seed(1)
 
-seg <- as.data.table(read_parquet("data/segments.parquet"))
+seg <- as.data.table(read_parquet("data-raw/data/segments.parquet"))
 seg[, test := game_id %in% sample(unique(game_id), round(0.15 * uniqueN(game_id)))]
 seg[, dur_class := pmin(round(duration), MAX_DUR)]
 seg[, clutch := is_clutch(period, secs_left, score_diff)]
@@ -42,7 +44,7 @@ fit_xgb <- function(X, y, test, clutch, num_class, name, max_train = 1e6, clutch
   model
 }
 
-dir.create("models", showWarnings = FALSE)
+dir.create("inst/models", showWarnings = FALSE)
 
 # 1. timeouts: only seasons under the current 7-timeout rules (2017-18 on), and only when one is left
 to <- seg[season >= 2018 & off_to_left > 0]
@@ -58,14 +60,14 @@ m_duration <- fit_xgb(x_duration(du), du$dur_class, du$test, du$clutch, MAX_DUR 
 
 # 4-5. league rates
 oreb <- seg[!is.na(oreb), .(rate = mean(oreb)), by = shot_kind]
-rates <- list(oreb = setNames(oreb$rate, oreb$shot_kind), ft_pct = readRDS("data/constants.rds")$ft_pct)
+rates <- list(oreb = setNames(oreb$rate, oreb$shot_kind), ft_pct = readRDS("data-raw/data/constants.rds")$ft_pct)
 print(rates)
 
-invisible(xgb.save(m_timeout,  "models/timeout.ubj"))
-invisible(xgb.save(m_outcome,  "models/outcome.ubj"))
-invisible(xgb.save(m_duration, "models/duration.ubj"))
-saveRDS(rates, "models/rates.rds")
-saveRDS(unique(seg[test == TRUE, game_id]), "models/test_games.rds")
+invisible(xgb.save(m_timeout,  "inst/models/timeout.ubj"))
+invisible(xgb.save(m_outcome,  "inst/models/outcome.ubj"))
+invisible(xgb.save(m_duration, "inst/models/duration.ubj"))
+saveRDS(rates, "inst/models/rates.rds")
+saveRDS(unique(seg[test == TRUE, game_id]), "data-raw/data/test_games.rds")
 
 # ---- calibration check: predicted vs actual outcome mix in key game situations ----
 tst <- seg[test == TRUE]

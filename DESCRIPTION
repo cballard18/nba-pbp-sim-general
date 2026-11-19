@@ -1,0 +1,25 @@
+Package: nbasim
+Title: League-Average NBA Possession Simulator
+Version: 0.1.0
+Authors@R: person("Your", "Name", role = c("aut", "cre"), email = "you@example.com")
+Description: Monte Carlo simulation of NBA games at the possession level. A chain of small
+    models (timeout, possession outcome, possession duration) fit to 2016-17 through 2025-26
+    play-by-play drives a simulator that plays full games, finishes games from any game state,
+    simulates the next possession, and returns play-by-play.
+License: What license it uses
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Depends: R (>= 4.1.0)
+Imports:
+    data.table,
+    parallel,
+    stats,
+    utils,
+    xgboost (>= 2.0.0)
+Suggests:
+    arrow,
+    devtools,
+    nbadatar,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0

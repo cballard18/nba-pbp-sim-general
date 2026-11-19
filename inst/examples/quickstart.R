@@ -1,10 +1,9 @@
-# Quick tour of the simulator. Run after fit_models.R:  Rscript example.R
-source("sim.R")
+# Quick tour of nbasim. Run with:  source(system.file("examples/quickstart.R", package = "nbasim"))
+library(nbasim)
 set.seed(1)
-m <- load_models()
 
 # 1. Play-by-play of one full game
-pbp <- sim_pbp(m)
+pbp <- sim_pbp()
 print(head(pbp, 10))
 cat("Final:", tail(pbp$score1, 1), "-", tail(pbp$score2, 1), "\n\n")
 
@@ -12,15 +11,13 @@ cat("Final:", tail(pbp$score1, 1), "-", tail(pbp$score2, 1), "\n\n")
 state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103,
                     def_fouls = 5, def_fouls_l2 = 1)
 
-print(sim_pbp(m, state, until = "possession"))  # just the next possession
-print(sim_pbp(m, state))                        # play out the rest of the game
+print(sim_pbp(state, until = "possession"))  # just the next possession
+print(sim_pbp(state))                        # play out the rest of the game
 
 # 3. Win probability from that spot (10,000 simulations)
-g <- simulate_games(games_from_states(state, reps = 10000), m)
-cat("\nWin probability:", mean(g$score[, 1] > g$score[, 2]),
-    "| OT:", mean(g$period > 4), "\n")
+cat("\nWin probability:", win_prob(state, n = 10000), "\n")
 
 # 4. League-average game distribution (1,000 full games)
-games <- game_summary(simulate_games(new_games(1000), m))
+games <- sim_games(1000)
 cat("Avg total:", mean(games$score1 + games$score2),
     "| Avg margin:", mean(abs(games$score1 - games$score2)), "\n")

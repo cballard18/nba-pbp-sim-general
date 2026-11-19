@@ -1,58 +1,19 @@
-# Monte Carlo game simulator. Many games are simulated side by side: each loop step advances
-# every unfinished game by one segment, so each model is called once per step on all games.
-source("common.R")
-
-load_models <- function(dir = "models") {
-  m <- lapply(c(timeout = "timeout", outcome = "outcome", duration = "duration"), function(name) {
-    model <- xgb.load(file.path(dir, paste0(name, ".ubj")))
-    xgb.model.parameters(model) <- list(nthread = parallel::detectCores())
-    model
-  })
-  c(m, readRDS(file.path(dir, "rates.rds")))
-}
-
-STAT_NAMES <- c("poss", "segments", "fg2a", "fg3a", "fga_made", "fta", "tov", "oreb", "timeouts", "fouls")
-
-# Fresh games at tip-off. Teams are 1 and 2; matrices hold one column per team.
-new_games <- function(n) {
-  tip <- sample(1:2, n, replace = TRUE)
-  list(period = rep(1L, n), secs_left = rep(720, n), off = tip, tip = tip,
-       start_type = rep("period_start", n), done = rep(FALSE, n),
-       score = matrix(0, n, 2), fouls = matrix(0, n, 2), fouls_l2 = matrix(0, n, 2),
-       to_left = matrix(7, n, 2),
-       stats = matrix(0, n, length(STAT_NAMES), dimnames = list(NULL, STAT_NAMES)))
-}
-
-# A game state, from the point of view of the team with the ball (team 1 in the output).
-# Timeouts default to the most the rules allow at that point in the game.
-game_state <- function(period, secs_left, off_score = 0, def_score = 0, start_type = "after_dreb",
-                       off_fouls = 0, def_fouls = 0, off_fouls_l2 = 0, def_fouls_l2 = 0,
-                       off_to_left = NULL, def_to_left = NULL, tip_off = TRUE) {
-  max_to <- fcase(period <= 3, 7, period == 4 & secs_left <= 180, 2, period == 4, 4, default = 2)
-  data.table(period = period, secs_left = secs_left, off_score = off_score, def_score = def_score,
-             score_diff = off_score - def_score, start_type = start_type,
-             off_fouls = off_fouls, def_fouls = def_fouls, off_fouls_l2 = off_fouls_l2,
-             def_fouls_l2 = def_fouls_l2, off_to_left = if (is.null(off_to_left)) max_to else off_to_left,
-             def_to_left = if (is.null(def_to_left)) max_to else def_to_left, tip_off = tip_off)
-}
-
-# Games starting from given states (game_state() rows, or rows of data/segments.parquet),
-# each repeated `reps` times. Team 1 is the team with the ball.
-games_from_states <- function(s, reps = 1) {
-  s <- s[rep(seq_len(nrow(s)), each = reps)]
-  n <- nrow(s)
-  score <- if ("off_score" %in% names(s)) cbind(s$off_score, s$def_score) else cbind(s$score_diff, 0)
-  list(period = s$period, secs_left = s$secs_left, off = rep(1L, n),
-       tip = fifelse(s$tip_off, 1L, 2L), start_type = s$start_type, done = rep(FALSE, n),
-       score = score, fouls = cbind(s$off_fouls, s$def_fouls),
-       fouls_l2 = cbind(s$off_fouls_l2, s$def_fouls_l2), to_left = cbind(s$off_to_left, s$def_to_left),
-       stats = matrix(0, n, length(STAT_NAMES), dimnames = list(NULL, STAT_NAMES)))
-}
-
-# until = "game":       play every game to the final buzzer (from tip-off or from a given state)
-# until = "possession": stop each game when the ball changes teams or the period ends
-# pbp = TRUE:           also return g$pbp, one row per simulated segment
-simulate_games <- function(g, m, until = c("game", "possession"), pbp = FALSE, max_steps = 3000) {
+#' Simulate games segment by segment
+#'
+#' The engine behind every other function. Many games are simulated side by side: each loop
+#' step advances every unfinished game by one segment (a team's turn with the ball), so each
+#' model is called once per step on all games.
+#'
+#' @param g Games from [new_games()] or [games_from_states()].
+#' @param until `"game"` plays every game to the final buzzer; `"possession"` stops each game
+#'   when the ball changes teams or the period ends.
+#' @param pbp If `TRUE`, also return `g$pbp`, one row per simulated segment.
+#' @param m Models, by default those shipped with the package.
+#' @param max_steps Safety cap on loop steps.
+#' @return `g`, updated: final `score` matrix, `period`, per-game `stats`, and `pbp` if asked.
+#' @export
+simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE,
+                           m = nbasim_models(), max_steps = 3000) {
   until <- match.arg(until)
   log <- list()
   for (step in seq_len(max_steps)) {
@@ -162,13 +123,59 @@ simulate_games <- function(g, m, until = c("game", "possession"), pbp = FALSE, m
   g
 }
 
-# Play-by-play for one game: from tip-off (state = NULL) or from a one-row game state
-sim_pbp <- function(m, state = NULL, until = "game") {
-  g <- if (is.null(state)) new_games(1) else games_from_states(state)
-  simulate_games(g, m, until = until, pbp = TRUE)$pbp[, game := NULL][]
-}
-
-# One row per simulated game
+#' One row per simulated game
+#' @param g Output of [simulate_games()].
+#' @return A data.table: final scores, number of periods, and box-score counts.
+#' @export
 game_summary <- function(g) {
   data.table(score1 = g$score[, 1], score2 = g$score[, 2], periods = g$period, g$stats)
+}
+
+#' Play-by-play for one simulated game
+#'
+#' @param state `NULL` for a full game from tip-off, or a [game_state()].
+#' @param until `"game"` to finish the game, `"possession"` for just the next possession.
+#' @return A data.table with one row per segment: period, clock (after the event), offense
+#'   (1/2), start_type, timeout, duration, event, fta, ftm, rebound, points, score1, score2.
+#' @examples
+#' sim_pbp()
+#' state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
+#' sim_pbp(state)
+#' sim_pbp(state, until = "possession")
+#' @export
+sim_pbp <- function(state = NULL, until = c("game", "possession")) {
+  g <- if (is.null(state)) new_games(1) else games_from_states(state)
+  simulate_games(g, until = until, pbp = TRUE)$pbp[, game := NULL][]
+}
+
+#' Simulate many games from tip-off
+#' @param n Number of games.
+#' @return [game_summary()] of the simulated games.
+#' @examples
+#' games <- sim_games(200)
+#' mean(games$score1 + games$score2)
+#' @export
+sim_games <- function(n = 1000) {
+  game_summary(simulate_games(new_games(n)))
+}
+
+#' Simulate many games from a game state
+#' @param state A [game_state()]. Team 1 is the team with the ball.
+#' @param n Number of simulations.
+#' @inheritParams simulate_games
+#' @return [game_summary()] of the simulations.
+#' @export
+sim_from_state <- function(state, n = 1000, until = c("game", "possession")) {
+  game_summary(simulate_games(games_from_states(state, n), until = until))
+}
+
+#' Win probability for the team with the ball
+#' @inheritParams sim_from_state
+#' @return Share of simulations won by the team with the ball.
+#' @examples
+#' win_prob(game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103), n = 2000)
+#' @export
+win_prob <- function(state, n = 10000) {
+  res <- sim_from_state(state, n)
+  mean(res$score1 > res$score2)
 }

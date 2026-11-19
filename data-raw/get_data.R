@@ -1,4 +1,4 @@
-# Download regular-season play-by-play from nbadatar and cache it locally.
+# Run from the package root. Download regular-season play-by-play from nbadatar and cache it locally.
 library(nbadatar)
 library(data.table)
 library(arrow)
@@ -12,6 +12,6 @@ keep <- c("season", "game_id", "number_event", "msg_type", "act_type", "period",
           "team_home", "team_away")
 pbp <- pbp[, ..keep]
 
-dir.create("data", showWarnings = FALSE)
-write_parquet(pbp, "data/pbp.parquet")
+dir.create("data-raw/data", showWarnings = FALSE)
+write_parquet(pbp, "data-raw/data/pbp.parquet")
 cat("saved", nrow(pbp), "rows,", uniqueN(pbp$game_id), "games\n")

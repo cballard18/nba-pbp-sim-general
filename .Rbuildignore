@@ -1,0 +1,8 @@
+^data-raw$
+^context\.md$
+^README\.html$
+^README_files$
+^\.vscode$
+^\.positron$
+^.*\.Rproj$
+^\.Rproj\.user$
