@@ -48,9 +48,46 @@ A longer tour: `source(system.file("examples/quickstart.R", package = "nbasim"))
 
 The unit is a **segment**: a team's turn with the ball until a shot, turnover, defensive foul or the end of the period. An offensive rebound or a non-bonus (side-out) foul starts a new segment for the same team. Each loop step simulates one segment for every unfinished game at once:
 
+```mermaid
+flowchart TD
+    start(["Segment starts<br/>period start · after make · after DREB<br/>after turnover · after OREB · side-out"])
+    to["Timeout Model<br/><i>only if a timeout is left</i>"]
+    out["Outcome Model<br/><i>11 classes</i>"]
+    dur["Duration Model<br/><i>game clock, capped by time left</i>"]
+    bonus{"Defense in<br/>the bonus?"}
+    ft["Free Throws<br/><i>league FT% (77.5%)</i>"]
+    reb["Rebound<br/><i>league OREB rate by shot type</i>"]
+    same(["Same team's ball<br/>new segment"])
+    other(["Other team's ball"])
+    pend(["End of period"])
+
+    start --> to --> out --> dur
+    dur -->|"2PT / 3PT MAKE"| other
+    dur -->|"2PT / 3PT MISS"| reb
+    dur -->|"AND-1 (1 FT)<br/>SHOOTING FOUL (2–3 FTs)"| ft
+    dur -->|"NON-SHOOTING FOUL"| bonus
+    dur -->|"TURNOVER"| other
+    dur -->|"END OF PERIOD"| pend
+    bonus -->|"YES: 2 FTs"| ft
+    bonus -->|"NO: side-out"| same
+    ft -->|"LAST FT MADE"| other
+    ft -->|"LAST FT MISSED"| reb
+    reb -->|"OFFENSIVE"| same
+    reb -->|"DEFENSIVE"| other
+
+    classDef model fill:#d9534f,stroke:#b52b27,color:#fff
+    classDef rule fill:#f0ad4e,stroke:#c9302c,color:#000
+    classDef term fill:#d3d3d3,stroke:#999,color:#000
+    class to,out,dur model
+    class bonus,ft,reb rule
+    class start,same,other,pend term
+```
+
+Red boxes are xgboost models, orange boxes are coded rules and league rates, and grey boxes are where a segment starts or ends. After every segment the score, team fouls, timeouts and clock are updated. A period also ends whenever the clock reaches 0.
+
 1. **Timeout?** xgboost, binary. Only allowed if the team has a timeout left.
 2. **Outcome**, xgboost with 11 classes: 2PT/3PT make/miss, 2PT/3PT and-1, shooting foul (2 or 3 FTs), non-shooting foul, turnover, end of period.
-3. **Duration** given the outcome: xgboost over 0–30 seconds, truncated to the game clock and the shot clock.
+3. **Duration** given the outcome: xgboost over game-clock time, capped at the time left in the period. Shot-clock limits are not enforced; the model learns them from the data (game time can run past 24 s, e.g. during an inbound after a make).
 4. **Free throws** at the league FT% (77.5%). A non-shooting foul gives 2 FTs when the defense is in the bonus, otherwise a side-out.
 5. **Rebound** after a missed FG or a missed final FT, at the league offensive rebound rate by shot type.
 6. Update score, team fouls, timeouts and possession, then handle period ends.
