@@ -11,11 +11,11 @@ duration) fit to 2016-17 through 2025-26 play-by-play. Start with \code{\link[=s
 \code{\link[=sim_games]{sim_games()}}, \code{\link[=sim_from_state]{sim_from_state()}} and \code{\link[=win_prob]{win_prob()}}.
 }
 \author{
-\strong{Maintainer}: Your Name \email{you@example.com}
+\strong{Maintainer}: Charlie Ballard \email{c.c.ballard18@gmail.com}
 
 Authors:
 \itemize{
-  \item Your Name \email{you@example.com}
+  \item Charlie Ballard \email{c.c.ballard18@gmail.com}
 }
 
 }

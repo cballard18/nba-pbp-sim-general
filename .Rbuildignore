@@ -6,3 +6,4 @@
 ^\.positron$
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^LICENSE\.md$
