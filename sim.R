@@ -1,0 +1,174 @@
+# Monte Carlo game simulator. Many games are simulated side by side: each loop step advances
+# every unfinished game by one segment, so each model is called once per step on all games.
+source("common.R")
+
+load_models <- function(dir = "models") {
+  m <- lapply(c(timeout = "timeout", outcome = "outcome", duration = "duration"), function(name) {
+    model <- xgb.load(file.path(dir, paste0(name, ".ubj")))
+    xgb.model.parameters(model) <- list(nthread = parallel::detectCores())
+    model
+  })
+  c(m, readRDS(file.path(dir, "rates.rds")))
+}
+
+STAT_NAMES <- c("poss", "segments", "fg2a", "fg3a", "fga_made", "fta", "tov", "oreb", "timeouts", "fouls")
+
+# Fresh games at tip-off. Teams are 1 and 2; matrices hold one column per team.
+new_games <- function(n) {
+  tip <- sample(1:2, n, replace = TRUE)
+  list(period = rep(1L, n), secs_left = rep(720, n), off = tip, tip = tip,
+       start_type = rep("period_start", n), done = rep(FALSE, n),
+       score = matrix(0, n, 2), fouls = matrix(0, n, 2), fouls_l2 = matrix(0, n, 2),
+       to_left = matrix(7, n, 2),
+       stats = matrix(0, n, length(STAT_NAMES), dimnames = list(NULL, STAT_NAMES)))
+}
+
+# A game state, from the point of view of the team with the ball (team 1 in the output).
+# Timeouts default to the most the rules allow at that point in the game.
+game_state <- function(period, secs_left, off_score = 0, def_score = 0, start_type = "after_dreb",
+                       off_fouls = 0, def_fouls = 0, off_fouls_l2 = 0, def_fouls_l2 = 0,
+                       off_to_left = NULL, def_to_left = NULL, tip_off = TRUE) {
+  max_to <- fcase(period <= 3, 7, period == 4 & secs_left <= 180, 2, period == 4, 4, default = 2)
+  data.table(period = period, secs_left = secs_left, off_score = off_score, def_score = def_score,
+             score_diff = off_score - def_score, start_type = start_type,
+             off_fouls = off_fouls, def_fouls = def_fouls, off_fouls_l2 = off_fouls_l2,
+             def_fouls_l2 = def_fouls_l2, off_to_left = if (is.null(off_to_left)) max_to else off_to_left,
+             def_to_left = if (is.null(def_to_left)) max_to else def_to_left, tip_off = tip_off)
+}
+
+# Games starting from given states (game_state() rows, or rows of data/segments.parquet),
+# each repeated `reps` times. Team 1 is the team with the ball.
+games_from_states <- function(s, reps = 1) {
+  s <- s[rep(seq_len(nrow(s)), each = reps)]
+  n <- nrow(s)
+  score <- if ("off_score" %in% names(s)) cbind(s$off_score, s$def_score) else cbind(s$score_diff, 0)
+  list(period = s$period, secs_left = s$secs_left, off = rep(1L, n),
+       tip = fifelse(s$tip_off, 1L, 2L), start_type = s$start_type, done = rep(FALSE, n),
+       score = score, fouls = cbind(s$off_fouls, s$def_fouls),
+       fouls_l2 = cbind(s$off_fouls_l2, s$def_fouls_l2), to_left = cbind(s$off_to_left, s$def_to_left),
+       stats = matrix(0, n, length(STAT_NAMES), dimnames = list(NULL, STAT_NAMES)))
+}
+
+# until = "game":       play every game to the final buzzer (from tip-off or from a given state)
+# until = "possession": stop each game when the ball changes teams or the period ends
+# pbp = TRUE:           also return g$pbp, one row per simulated segment
+simulate_games <- function(g, m, until = c("game", "possession"), pbp = FALSE, max_steps = 3000) {
+  until <- match.arg(until)
+  log <- list()
+  for (step in seq_len(max_steps)) {
+    a <- which(!g$done)
+    if (!length(a)) break
+    n <- length(a)
+    off <- g$off[a]; def <- 3L - off
+    oi <- cbind(a, off); di <- cbind(a, def)
+
+    # Q4 rule: at most 2 timeouts after the 3:00 mark
+    late4 <- a[g$period[a] == 4 & g$secs_left[a] <= 180]
+    g$to_left[late4, ] <- pmin(g$to_left[late4, , drop = FALSE], 2)
+
+    d <- list(period = g$period[a], secs_left = g$secs_left[a],
+              score_diff = g$score[oi] - g$score[di],
+              def_bonus = in_bonus(g$period[a], g$secs_left[a], g$fouls[di], g$fouls_l2[di]),
+              start_type = g$start_type[a], off_to_left = g$to_left[oi])
+
+    # 1. timeout
+    p_to <- predict(m$timeout, x_timeout(d)) * (d$off_to_left > 0)
+    d$after_timeout <- runif(n) < p_to
+    g$to_left[oi] <- g$to_left[oi] - d$after_timeout
+
+    # 2. outcome (shot clock: a team can't run out a period with more than 24 s left)
+    po <- predict_probs(m$outcome, x_outcome(d))
+    po[d$secs_left > 24, OUTCOMES == "end_period"] <- 0
+    o <- OUTCOMES[sample_rows(po)]
+    d$outcome <- o
+
+    # 3. duration, never longer than the clock
+    pd <- predict_probs(m$duration, x_duration(d))
+    pd[outer(d$secs_left + 0.5, 0:MAX_DUR, "<")] <- 0
+    dur <- (0:MAX_DUR)[sample_rows(pd)] + runif(n, -0.5, 0.5)
+    dur <- pmin(pmax(dur, 0.1), d$secs_left)
+    dur[o == "end_period"] <- d$secs_left[o == "end_period"]
+    clock <- d$secs_left - dur
+
+    # 4. resolve: points, fouls, free throws
+    pts  <- c(fg2_make = 2, fg3_make = 3, fg2_and1 = 2, fg3_and1 = 3)[o]
+    n_ft <- c(fg2_and1 = 1, fg3_and1 = 1, foul_shoot2 = 2, foul_shoot3 = 3)[o]
+    pts[is.na(pts)] <- 0; n_ft[is.na(n_ft)] <- 0
+    fouled <- o %in% c("fg2_and1", "fg3_and1", "foul_shoot2", "foul_shoot3", "foul_nonshoot")
+    n_ft[o == "foul_nonshoot" & in_bonus(d$period, clock, g$fouls[di], g$fouls_l2[di])] <- 2
+    g$fouls[di]    <- g$fouls[di] + fouled
+    g$fouls_l2[di] <- g$fouls_l2[di] + (fouled & clock <= 120)
+
+    has_ft    <- n_ft > 0
+    last_made <- runif(n) < m$ft_pct
+    ft_made   <- has_ft * (rbinom(n, pmax(n_ft - 1, 0), m$ft_pct) + last_made)
+    pts <- pts + ft_made
+    g$score[oi] <- g$score[oi] + pts
+
+    # 5. who has the ball next, and how the next segment starts
+    kind <- fcase(o %in% c("fg2_make", "fg3_make"), "make",
+                  has_ft, fifelse(last_made, "make", "miss"),
+                  o %in% c("fg2_miss", "fg3_miss"), "miss",
+                  o == "turnover", "turnover",
+                  o == "foul_nonshoot", "sideout",
+                  default = "period_end")
+    shot_kind <- fcase(has_ft, "ft", o == "fg3_miss", "fg3", default = "fg2")
+    oreb <- kind == "miss" & runif(n) < m$oreb[shot_kind]
+    g$off[a] <- fifelse(kind == "sideout" | oreb, off, def)
+    g$start_type[a] <- fcase(kind == "make", "after_make", oreb, "after_oreb",
+                             kind == "miss", "after_dreb", kind == "turnover", "after_turnover",
+                             default = "sideout")
+    g$secs_left[a] <- clock
+    if (pbp) log[[step]] <- data.table(
+      game = a, period = d$period, clock = clock, offense = off, start_type = d$start_type,
+      timeout = d$after_timeout, duration = dur, event = o, fta = n_ft, ftm = ft_made,
+      rebound = fifelse(kind == "miss" & clock > 0, fifelse(oreb, "offensive", "defensive"), NA_character_),
+      points = pts, score1 = g$score[a, 1], score2 = g$score[a, 2])
+
+    s <- cbind(d$start_type %in% c("period_start", "after_make", "after_dreb", "after_turnover"),
+               1, o %in% c("fg2_make", "fg2_miss", "fg2_and1"), o %in% c("fg3_make", "fg3_miss", "fg3_and1"),
+               o %in% c("fg2_make", "fg3_make", "fg2_and1", "fg3_and1"), n_ft, o == "turnover", oreb,
+               d$after_timeout, fouled)
+    g$stats[a, ] <- g$stats[a, ] + s
+
+    # 6. end of period / game
+    e <- a[clock <= 0 | o == "end_period"]
+    if (length(e)) {
+      over <- g$period[e] >= 4 & g$score[e, 1] != g$score[e, 2]
+      g$done[e[over]] <- TRUE
+      nx <- e[!over]
+      if (length(nx)) {
+        g$period[nx] <- g$period[nx] + 1L
+        p <- g$period[nx]
+        g$secs_left[nx] <- period_length(p)
+        g$fouls[nx, ] <- 0; g$fouls_l2[nx, ] <- 0
+        g$start_type[nx] <- "period_start"
+        # Q2 & Q3 go to the team that lost the opening tip, Q4 to the winner, OT is a jump ball
+        g$off[nx] <- fcase(p %in% 2:3, 3L - g$tip[nx], p == 4, g$tip[nx],
+                           default = sample(1:2, length(nx), replace = TRUE))
+        # timeouts: at most 4 in Q4, 2 per overtime
+        q4 <- nx[p == 4]; ot <- nx[p >= 5]
+        g$to_left[q4, ] <- pmin(g$to_left[q4, , drop = FALSE], 4)
+        g$to_left[ot, ] <- 2
+      }
+    }
+    if (until == "possession") g$done[a[g$off[a] != off | a %in% e]] <- TRUE
+  }
+  if (pbp) {
+    g$pbp <- rbindlist(log)
+    setorder(g$pbp, game)
+    g$pbp[, clock := sprintf("%d:%04.1f", clock %/% 60, clock %% 60)]
+  }
+  g
+}
+
+# Play-by-play for one game: from tip-off (state = NULL) or from a one-row game state
+sim_pbp <- function(m, state = NULL, until = "game") {
+  g <- if (is.null(state)) new_games(1) else games_from_states(state)
+  simulate_games(g, m, until = until, pbp = TRUE)$pbp[, game := NULL][]
+}
+
+# One row per simulated game
+game_summary <- function(g) {
+  data.table(score1 = g$score[, 1], score2 = g$score[, 2], periods = g$period, g$stats)
+}
