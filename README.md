@@ -4,12 +4,14 @@ A league-average NBA game simulator at the possession level. A chain of small ML
 
 ## Install
 
+The package lives on the `package` branch of this repo:
+
 ```r
-# from the package root
-devtools::install()
-# or, once on GitHub
-remotes::install_github("<user>/<repo>")
+install.packages("remotes")   # if needed
+remotes::install_github("cballard18/nba-pbp-sim-general@package")
 ```
+
+Dependencies (`data.table`, `xgboost`) are installed automatically, and the fitted models ship with the package, so nothing else needs downloading.
 
 ## Quick start
 
