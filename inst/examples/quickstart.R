@@ -18,11 +18,11 @@ print(sim_pbp(state))                        # play out the rest of the game
 print(sim_pbp(state, until = "possession", action = "fg3a", possessions = 2))
 print(head(sim_paths(state, action = "fg3a"), 8))   # how often each path happens + win prob
 
-# 4. eWP of each choice: let the model decide, take a 2, take a 3
+# 4. eWP of each choice: take a 2 or take a 3
 print(compare_actions(state))
 
-# 5. Win probability from that spot (10,000 simulations)
-cat("\nWin probability: sim", win_prob(state, n = 10000), "| neural net", nn_win_prob(state), "\n")
+# 5. Neural net win probability from that spot, and its average after a forced 3
+cat("\nWin probability:", win_prob(state), "| after a 3:", win_prob(state, action = "fg3a"), "\n")
 
 # 6. League-average game distribution (1,000 full games)
 games <- sim_games(1000)

@@ -25,13 +25,12 @@ before stopping (the end of a period always stops).}
 \value{
 A data.table, one row per path, most common first: \code{path} (e.g.
 \code{"T1 fg3_miss DREB > T2 turnover"}; team 1 has the ball in \code{state}), \code{share} of
-simulations, \code{pts1} / \code{pts2} scored during the path, \code{ewp1}, team 1's neural net win
-probability right after the path, and \code{win1}, the share of those simulations team 1 went on
-to win.
+simulations, \code{pts1} / \code{pts2} scored during the path, and \code{ewp1}, team 1's neural net win
+probability right after the path.
 }
 \description{
 Simulates \code{n} copies of the next \code{possessions} possessions from a state (with any forced
-\code{action}), labels each one's path of events, then plays every copy to the final buzzer.
+\code{action}) and labels each one's path of events.
 }
 \examples{
 state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)

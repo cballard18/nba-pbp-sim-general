@@ -30,7 +30,7 @@ test_that("finishing a game starts from the given score", {
 test_that("win probability is sensible", {
   set.seed(4)
   big_lead <- game_state(period = 4, secs_left = 30, off_score = 110, def_score = 95)
-  expect_gt(win_prob(big_lead, n = 500), 0.99)
+  expect_gt(win_prob(big_lead), 0.99)
 })
 
 test_that("a forced shot only produces outcomes of that shot", {
@@ -70,15 +70,15 @@ test_that("path breakdown covers every simulation", {
   state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
   paths <- sim_paths(state, action = "fg3a", n = 1000)
   expect_equal(sum(paths$share), 1)
-  expect_true(all(paths$win1 >= 0 & paths$win1 <= 1))
+  expect_true(all(paths$ewp1 >= 0 & paths$ewp1 <= 1))
   expect_equal(paths[path == "T1 fg3_make", pts1], 3)
 })
 
 test_that("neural net win probability is sensible and in the pbp", {
-  ot_start <- nn_win_prob(game_state(period = 5, secs_left = 300, off_score = 100, def_score = 100))
+  ot_start <- win_prob(game_state(period = 5, secs_left = 300, off_score = 100, def_score = 100))
   expect_gt(ot_start, 0.5)                                       # tied at the start of OT: the ball
   expect_lt(ot_start, 0.6)                                       # is worth a little
-  expect_gt(nn_win_prob(game_state(period = 4, secs_left = 30, off_score = 110, def_score = 95)), 0.99)
+  expect_gt(win_prob(game_state(period = 4, secs_left = 30, off_score = 110, def_score = 95)), 0.99)
   set.seed(9)
   p <- sim_pbp()
   expect_true(all(p$wp >= 0 & p$wp <= 1))
@@ -90,7 +90,8 @@ test_that("compare_actions gives one row per action", {
   set.seed(10)
   state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
   res <- compare_actions(state, n = 500)
-  expect_equal(res$action, c("model", "fg2a", "fg3a"))
-  expect_equal(res$ewp_vs_model[1], 0)
+  expect_setequal(res$action, c("fg2a", "fg3a"))
+  expect_equal(res$ewp_vs_best[1], 0)
+  expect_true(all(res$ewp_vs_best <= 0))
   expect_true(all(res$ewp1 > 0 & res$ewp1 < 1))
 })

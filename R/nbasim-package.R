@@ -14,4 +14,4 @@
 .datatable.aware <- TRUE
 
 utils::globalVariables(c("game", "clock", "label", "offense", "event", "fta", "ftm", "rebound",
-                         "path", "pts1", "pts2", "win", "share", "wp", "wp_delta", "ewp", "ewp1", "win1"))
+                         "path", "pts1", "pts2", "share", "wp", "wp_delta", "ewp", "ewp1", "ewp_vs_best"))

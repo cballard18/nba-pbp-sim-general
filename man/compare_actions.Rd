@@ -6,7 +6,7 @@
 \usage{
 compare_actions(
   state,
-  actions = list(model = NA, fg2a = "fg2a", fg3a = "fg3a"),
+  actions = list(fg2a = "fg2a", fg3a = "fg3a"),
   possessions = 1,
   n = 10000
 )
@@ -14,8 +14,7 @@ compare_actions(
 \arguments{
 \item{state}{A \code{\link[=game_state]{game_state()}}. Team 1 is the team with the ball.}
 
-\item{actions}{A named list of actions (each one as in \code{\link[=simulate_games]{simulate_games()}}'s \code{action}; \code{NA}
-lets the model decide).}
+\item{actions}{A named list of actions, each one as in \code{\link[=simulate_games]{simulate_games()}}'s \code{action}.}
 
 \item{possessions}{With \code{until = "possession"}, how many changes of possession to play
 before stopping (the end of a period always stops).}
@@ -23,13 +22,12 @@ before stopping (the end of a period always stops).}
 \item{n}{Number of simulations.}
 }
 \value{
-A data.table, one row per action: \code{ewp1} and \code{win1}, and \code{ewp_vs_model} /
-\code{win_vs_model}, their change against the first action (by default: the model decides).
+A data.table, one row per action, best first: \code{ewp1}, and \code{ewp_vs_best}, its change
+against the best action (0 for the best, negative for the others).
 }
 \description{
 For each action, simulates the next \code{possessions} possessions \code{n} times and averages team 1's
-neural net win probability after them (eWP), and the share of simulations team 1 went on to
-win when every game is played out.
+neural net win probability after them (eWP).
 }
 \examples{
 state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)

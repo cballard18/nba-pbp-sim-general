@@ -34,18 +34,25 @@ state_wp <- function(g, i, game_secs, m) {
           nn_wp(g$score[i, 1] - g$score[i, 2], game_secs, g$off[i] == 1, m$wp))
 }
 
-#' Neural net win probability for a game state
+#' Win probability for the team with the ball
 #'
-#' Win probability for the team with the ball from the neural net ensemble of the
-#' NBA-Shot-Optimization project, on a neutral court with a pregame spread of 0. It is
-#' instant, unlike [win_prob()], which simulates the rest of the game.
+#' From the neural net ensemble of the NBA-Shot-Optimization project, on a neutral court with a
+#' pregame spread of 0. Without an `action` it scores the state directly (instant). With one, it
+#' simulates the next `possessions` possessions `n` times with that action forced and averages the
+#' net's win probability after them (eWP).
 #'
-#' @param state A [game_state()].
-#' @return Win probability for the team with the ball, one per row of `state`.
+#' @inheritParams sim_from_state
+#' @return Win probability for the team with the ball: one per row of `state` without an
+#'   `action`, one number with one.
 #' @examples
-#' nn_win_prob(game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103))
+#' state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
+#' win_prob(state)
+#' win_prob(state, action = "fg3a", n = 2000)
 #' @export
-nn_win_prob <- function(state) {
-  nn_wp(state$off_score - state$def_score, game_secs_left(state$period, state$secs_left), TRUE,
-        nbasim_models()$wp)
+win_prob <- function(state, action = NULL, possessions = 1, n = 10000) {
+  if (is.null(action))
+    return(nn_wp(state$off_score - state$def_score, game_secs_left(state$period, state$secs_left),
+                 TRUE, nbasim_models()$wp))
+  if (nrow(state) != 1) stop("`state` must be a single row when `action` is given.", call. = FALSE)
+  mean(run_paths(state, action, possessions, n)$ewp)
 }
