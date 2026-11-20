@@ -9,7 +9,8 @@ sim_from_state(
   n = 1000,
   until = c("game", "possession"),
   action = NULL,
-  possessions = 1
+  possessions = 1,
+  odds = c("league", "model")
 )
 }
 \arguments{
@@ -30,6 +31,14 @@ segment, then foul on the one after.}
 
 \item{possessions}{With \code{until = "possession"}, how many changes of possession to play
 before stopping (the end of a period always stops).}
+
+\item{odds}{Odds of a forced \code{"fg2a"} / \code{"fg3a"} (make, miss, and-1, shooting foul).
+\code{"league"} (default): league averages, the same at any clock and score. \code{"model"}: the
+outcome model's odds for that clock and score, which late in the clock include heaves and
+end-of-clock shots. Shots the model decides on its own always use the model's odds.
+Either way a forced shot (\code{"fg2a"}, \code{"fg3a"} or one of their exact outcomes) takes the same
+time whatever kind it is and however it ends: the model's duration averaged over all shot
+outcomes.}
 }
 \value{
 \code{\link[=game_summary]{game_summary()}} of the simulations.

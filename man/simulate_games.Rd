@@ -10,8 +10,10 @@ simulate_games(
   pbp = FALSE,
   action = NULL,
   possessions = 1,
+  odds = c("league", "model"),
   m = nbasim_models(),
-  max_steps = 3000
+  max_steps = 3000,
+  fix = NULL
 )
 }
 \arguments{
@@ -33,9 +35,20 @@ segment, then foul on the one after.}
 \item{possessions}{With \code{until = "possession"}, how many changes of possession to play
 before stopping (the end of a period always stops).}
 
+\item{odds}{Odds of a forced \code{"fg2a"} / \code{"fg3a"} (make, miss, and-1, shooting foul).
+\code{"league"} (default): league averages, the same at any clock and score. \code{"model"}: the
+outcome model's odds for that clock and score, which late in the clock include heaves and
+end-of-clock shots. Shots the model decides on its own always use the model's odds.
+Either way a forced shot (\code{"fg2a"}, \code{"fg3a"} or one of their exact outcomes) takes the same
+time whatever kind it is and however it ends: the model's duration averaged over all shot
+outcomes.}
+
 \item{m}{Models, by default those shipped with the package.}
 
 \item{max_steps}{Safety cap on loop steps.}
+
+\item{fix}{Internal (used for eWP): pins the first segment's free throws and rebound, as a
+list of \code{ftm_lead} (FTs made before the last one), \code{last_made} and \code{oreb}; \code{NA} = random.}
 }
 \value{
 \code{g}, updated: final \code{score} matrix, \code{period}, per-game \code{stats}, \code{over} (game

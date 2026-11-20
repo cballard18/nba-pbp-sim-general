@@ -7,11 +7,12 @@
 #' @keywords internal
 #' @import data.table
 #' @importFrom xgboost xgb.load xgb.model.parameters<-
-#' @importFrom stats predict runif rbinom
+#' @importFrom stats predict runif rbinom weighted.mean dbinom
 #' @importFrom utils globalVariables
 "_PACKAGE"
 
 .datatable.aware <- TRUE
 
 utils::globalVariables(c("game", "clock", "label", "offense", "event", "fta", "ftm", "rebound",
-                         "path", "pts1", "pts2", "share", "wp", "wp_delta", "ewp", "ewp1", "ewp_vs_best"))
+                         "path", "pts1", "pts2", "share", "wp", "wp_delta", "ewp", "ewp1", "ewp_vs_best", "w",
+                         "ftm_lead", "last", "p", "."))

@@ -95,3 +95,42 @@ test_that("compare_actions gives one row per action", {
   expect_true(all(res$ewp_vs_best <= 0))
   expect_true(all(res$ewp1 > 0 & res$ewp1 < 1))
 })
+
+test_that("a forced shot's outcomes are weighted by the model's exact odds", {
+  set.seed(11)
+  state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
+  d <- segment_inputs(games_from_states(state), 1L); d$after_timeout <- FALSE
+  p <- outcome_probs(d, "fg3a", nbasim_models())[1, ]
+  p <- p / sum(p)
+  r <- run_paths(state, "fg3a", 1, 1000)
+  expect_equal(sum(r$w), 1)
+  expect_equal(r[path == "T1 fg3_make", sum(w)], unname(p[OUTCOMES == "fg3_make"]))
+})
+
+test_that("free throws and rebounds can be pinned, and shot branches cover every case", {
+  set.seed(12)
+  state <- game_state(period = 3, secs_left = 300, off_score = 70, def_score = 72)
+  g <- simulate_games(games_from_states(state, 200), until = "possession", pbp = TRUE,
+                      action = "fg3_miss", fix = list(oreb = TRUE))
+  expect_true(all(g$pbp[, .SD[1], by = game]$rebound == "offensive"))
+  g <- simulate_games(games_from_states(state, 200), until = "possession", pbp = TRUE,
+                      action = "foul_shoot3", fix = list(ftm_lead = 2L, last_made = TRUE))
+  expect_true(all(g$pbp[, .SD[1], by = game]$ftm == 3))
+  for (a in c("fg2a", "fg3a")) {
+    b <- shot_branches(state, a, nbasim_models())
+    expect_equal(sum(b$p), 1)
+    expect_setequal(unique(b$outcome), ACTIONS[[a]])
+  }
+})
+
+test_that("forced shots use league odds by default, the model's on request", {
+  set.seed(13)
+  state <- game_state(period = 4, secs_left = 10, off_score = 100, def_score = 100)
+  m <- nbasim_models()
+  league <- run_paths(state, "fg3a", 1, 500)
+  expect_equal(league[startsWith(path, "T1 fg3_make"), sum(w)], unname(m$shot_odds$fg3a["fg3_make"]))
+  model <- run_paths(state, "fg3a", 1, 500, odds = "model")
+  expect_false(isTRUE(all.equal(model[startsWith(path, "T1 fg3_make"), sum(w)],
+                                unname(m$shot_odds$fg3a["fg3_make"]))))
+  expect_error(compare_actions(state, odds = "nope"))
+})

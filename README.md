@@ -62,14 +62,14 @@ A longer tour: `source(system.file("examples/quickstart.R", package = "nbasim"))
 | `"foul"` | defense | intentional foul within 1-3 s: 2 FTs if in the bonus, otherwise a side-out |
 | an exact outcome, e.g. `"fg3_miss"` | offense | — |
 
-A forced shot keeps the model's own make/miss/foul odds for that clock and score, rescaled to sum to 1. A forced segment never starts with a timeout. Give a vector to force several segments in a row, with `NA` where the model decides. For example, `action = c("fg2a", "foul")` with `possessions = 2` means: team 1 shoots a 2, then team 1 fouls on team 2's possession. An offensive rebound or a side-out starts a new segment, so it takes a slot in the vector. In the play-by-play an intentional foul shows as `foul_intentional` on the row of the team that was fouled (the offense).
+By default a forced shot uses league-average odds of a make, miss, and-1 and shooting foul (2s: 43.2% / 41.5% / 3.7% / 11.6%; 3s: 35.3% / 63.3% / 0.3% / 1.0%), the same at any clock and score. With `odds = "model"` it uses the outcome model's odds for that clock and score instead. Late in the clock these come from the shots teams actually took, heaves and end-of-clock shots included, so a 3 with 2 seconds left goes in only a few percent of the time. Shots the model decides on its own always use the model's odds. A forced segment never starts with a timeout. Give a vector to force several segments in a row, with `NA` where the model decides. For example, `action = c("fg2a", "foul")` with `possessions = 2` means: team 1 shoots a 2, then team 1 fouls on team 2's possession. An offensive rebound or a side-out starts a new segment, so it takes a slot in the vector. In the play-by-play an intentional foul shows as `foul_intentional` on the row of the team that was fouled (the offense).
 
 ```r
 state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
 sim_paths(state, action = "fg3a")
 #>                                path  share  pts1  pts2  ewp1
-#> 1:                 T1 fg3_miss DREB 0.486     0     0 0.127
-#> 2:                      T1 fg3_make 0.335     3     0 0.594
+#> 1:                 T1 fg3_miss DREB 0.476     0     0 0.126
+#> 2:                      T1 fg3_make 0.353     3     0 0.594
 #> 3:   T1 fg3_miss OREB > T1 fg2_make 0.034     2     0 0.401
 #> ...
 ```
@@ -87,11 +87,11 @@ The nets are small enough that `data-raw/import_wp.R` copies their weights into 
 ```r
 compare_actions(game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103))
 #>    action  ewp1 ewp_vs_best
-#> 1:   fg3a 0.316       0.000
-#> 2:   fg2a 0.293      -0.022
+#> 1:   fg3a 0.320       0.000
+#> 2:   fg2a 0.306      -0.013
 ```
 
-For each action, the simulator plays the next possession 10,000 times with that action forced, and `ewp1` is the average neural net win probability for team 1 at the end of it. `ewp_vs_best` is each action's gap to the best one. Every action in the table forces a shot, so turnovers, timeouts and off-ball fouls are left out of all of them alike. Pass your own list to compare other choices, e.g. `actions = list(fg2a = "fg2a", foul = c(NA, "foul"))` with `possessions = 2`.
+For each action, the simulator plays the next possession 10,000 times with that action forced, and `ewp1` is the average neural net win probability for team 1 at the end of it. When the action is a shot, what happens on that shot isn't drawn at random. The odds of each branch are known exactly: make, miss, and-1 or shooting foul (the model's odds), then how many free throws go in (league FT%), and the offensive or defensive rebound after a miss (league OREB rate). Each branch gets its own share of the 10,000 simulations, weighted by its probability. Only the clock and later possessions (e.g. the putback after an offensive rebound) are still random. This cuts the run-to-run noise by more than half (about ±0.12 points on the 3-minus-2 gap here, down from ±0.27). `sim_paths()` uses the same weights for `share`. `ewp_vs_best` is each action's gap to the best one. Every action in the table forces a shot, so turnovers, timeouts and off-ball fouls are left out of all of them alike. Pass your own list to compare other choices, e.g. `actions = list(fg2a = "fg2a", foul = c(NA, "foul"))` with `possessions = 2`.
 
 The net's possession input is the team with the ball *after* each play-by-play row (after a make: the other team). An earlier version credited the team that made the play, which made having the ball look nearly worthless late in games. The fix is in `get_pbp.R` of the WP repo.
 
@@ -153,7 +153,7 @@ Red boxes are xgboost models, blue boxes are the outcome model's 11 classes (2PT
 
 1. **Timeout?** xgboost, binary. Only allowed if the team has a timeout left.
 2. **Outcome**, xgboost with 11 classes: 2PT/3PT make/miss, 2PT/3PT and-1, shooting foul (2 or 3 FTs), non-shooting foul, turnover, end of period.
-3. **Duration** given the outcome: xgboost over game-clock time, capped at the time left in the period. Shot-clock limits are not enforced; the model learns them from the data (game time can run past 24 s, e.g. during an inbound after a make).
+3. **Duration** given the outcome: xgboost over game-clock time, capped at the time left in the period. Shot-clock limits are not enforced; the model learns them from the data (game time can run past 24 s, e.g. during an inbound after a make). A forced shot uses the duration averaged over all shot outcomes, so a 2 and a 3 take the same time however they end.
 4. **Free throws** at the league FT% (77.5%). A non-shooting foul gives 2 FTs when the defense is in the bonus, otherwise a side-out.
 5. **Rebound** after a missed FG or a missed final FT, at the league offensive rebound rate by shot type.
 6. Update score, team fouls, timeouts and possession, then handle period ends.
@@ -169,7 +169,7 @@ The model features are period, seconds left in the period and in the game, score
 | 3PA / FTA / TOV / OREB | 67.1 / 43.9 / 28.1 / 27.6 | 67.1 / 44.3 / 28.0 / 27.7 |
 | OT rate | 5.3% | 4.7% |
 
-The final-margin distribution matches closely. Win-probability Brier score from real mid-game states is 0.158, against 0.180 for a "leader wins 75%" baseline.
+The final-margin distribution matches closely. Win-probability Brier score from real mid-game states is 0.158, against 0.180 for a "leader wins 75%" baseline. One known gap: in the last 2–9 seconds of a period, simulated shots end at 0:00 less often than real ones (e.g. 23% vs 39% with 3 s left), because durations are drawn in whole seconds; `validate.R` section 5 tracks this.
 
 ## Rebuilding the models (`data-raw/`)
 

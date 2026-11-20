@@ -15,9 +15,11 @@ export(simulate_games)
 export(win_prob)
 import(data.table)
 importFrom(stats,
+  dbinom,
   predict,
   rbinom,
-  runif
+  runif,
+  weighted.mean
 )
 importFrom(utils,globalVariables)
 importFrom(xgboost,

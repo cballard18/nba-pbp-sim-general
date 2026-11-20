@@ -17,15 +17,26 @@
 #'   segment, then foul on the one after.
 #' @param possessions With `until = "possession"`, how many changes of possession to play
 #'   before stopping (the end of a period always stops).
+#' @param odds Odds of a forced `"fg2a"` / `"fg3a"` (make, miss, and-1, shooting foul).
+#'   `"league"` (default): league averages, the same at any clock and score. `"model"`: the
+#'   outcome model's odds for that clock and score, which late in the clock include heaves and
+#'   end-of-clock shots. Shots the model decides on its own always use the model's odds.
+#'   Either way a forced shot (`"fg2a"`, `"fg3a"` or one of their exact outcomes) takes the same
+#'   time whatever kind it is and however it ends: the model's duration averaged over all shot
+#'   outcomes.
 #' @param m Models, by default those shipped with the package.
 #' @param max_steps Safety cap on loop steps.
+#' @param fix Internal (used for eWP): pins the first segment's free throws and rebound, as a
+#'   list of `ftm_lead` (FTs made before the last one), `last_made` and `oreb`; `NA` = random.
 #' @return `g`, updated: final `score` matrix, `period`, per-game `stats`, `over` (game
 #'   finished), and `pbp` if asked. `pbp$wp` is team 1's win probability after each event from
 #'   the neural net (see [win_prob()]), and `wp_delta` its change from the row before.
 #' @export
 simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, action = NULL,
-                           possessions = 1, m = nbasim_models(), max_steps = 3000) {
+                           possessions = 1, odds = c("league", "model"), m = nbasim_models(),
+                           max_steps = 3000, fix = NULL) {
   until <- match.arg(until)
+  odds <- match.arg(odds)
   check_action(action)
   if (is.null(g$over)) g$over <- rep(FALSE, length(g$done))
   changes <- integer(length(g$done))
@@ -36,6 +47,7 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
     if (!length(a)) break
     n <- length(a)
     act <- if (step <= length(action)) action[step] else NA
+    fx  <- if (step == 1) fix else NULL
     off <- g$off[a]; def <- 3L - off
     oi <- cbind(a, off); di <- cbind(a, def)
 
@@ -43,26 +55,19 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
     late4 <- a[g$period[a] == 4 & g$secs_left[a] <= 180]
     g$to_left[late4, ] <- pmin(g$to_left[late4, , drop = FALSE], 2)
 
-    d <- list(period = g$period[a], secs_left = g$secs_left[a],
-              score_diff = g$score[oi] - g$score[di],
-              def_bonus = in_bonus(g$period[a], g$secs_left[a], g$fouls[di], g$fouls_l2[di]),
-              start_type = g$start_type[a], off_to_left = g$to_left[oi])
+    d <- segment_inputs(g, a)
 
     # 1. timeout
     p_to <- predict(m$timeout, x_timeout(d)) * (d$off_to_left > 0) * is.na(act)
     d$after_timeout <- runif(n) < p_to
     g$to_left[oi] <- g$to_left[oi] - d$after_timeout
 
-    # 2. outcome (shot clock: a team can't run out a period with more than 24 s left);
-    #    a forced action keeps only its outcomes, in the model's proportions
-    po <- predict_probs(m$outcome, x_outcome(d))
-    po[d$secs_left > 24, OUTCOMES == "end_period"] <- 0
-    if (!is.na(act)) po[, !OUTCOMES %in% c(ACTIONS[[act]], act)] <- 0
-    o <- OUTCOMES[sample_rows(po)]
+    # 2. outcome
+    o <- OUTCOMES[sample_rows(outcome_probs(d, act, m, odds))]
     d$outcome <- o
 
     # 3. duration, never longer than the clock (an intentional foul comes within 1-3 s)
-    pd <- predict_probs(m$duration, x_duration(d))
+    pd <- if (forced_shot(act)) shot_clock_probs(d, m) else predict_probs(m$duration, x_duration(d))
     pd[outer(d$secs_left + 0.5, 0:MAX_DUR, "<")] <- 0
     dur <- (0:MAX_DUR)[sample_rows(pd)] + runif(n, -0.5, 0.5)
     if (identical(act, "foul")) dur <- runif(n, 1, 3)
@@ -80,8 +85,9 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
     g$fouls_l2[di] <- g$fouls_l2[di] + (fouled & clock <= 120)
 
     has_ft    <- n_ft > 0
-    last_made <- runif(n) < m$ft_pct
-    ft_made   <- has_ft * (rbinom(n, pmax(n_ft - 1, 0), m$ft_pct) + last_made)
+    last_made <- pinned(fx$last_made, runif(n) < m$ft_pct)
+    ft_lead   <- pinned(fx$ftm_lead, rbinom(n, pmax(n_ft - 1, 0), m$ft_pct))
+    ft_made   <- has_ft * (ft_lead + last_made)
     pts <- pts + ft_made
     g$score[oi] <- g$score[oi] + pts
 
@@ -93,7 +99,7 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
                   o == "foul_nonshoot", "sideout",
                   default = "period_end")
     shot_kind <- fcase(has_ft, "ft", o == "fg3_miss", "fg3", default = "fg2")
-    oreb <- kind == "miss" & runif(n) < m$oreb[shot_kind]
+    oreb <- kind == "miss" & pinned(fx$oreb, runif(n) < m$oreb[shot_kind])
     g$off[a] <- fifelse(kind == "sideout" | oreb, off, def)
     g$start_type[a] <- fcase(kind == "make", "after_make", oreb, "after_oreb",
                              kind == "miss", "after_dreb", kind == "turnover", "after_turnover",
@@ -149,6 +155,67 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
   g
 }
 
+# A pinned value for every game, or the random draws when it isn't pinned
+pinned <- function(value, draws) if (length(value) && !is.na(value)) rep(value, length(draws)) else draws
+
+# Model inputs for the segment that games `a` are about to play (before any timeout)
+segment_inputs <- function(g, a) {
+  off <- g$off[a]
+  oi <- cbind(a, off); di <- cbind(a, 3L - off)
+  list(period = g$period[a], secs_left = g$secs_left[a], score_diff = g$score[oi] - g$score[di],
+       def_bonus = in_bonus(g$period[a], g$secs_left[a], g$fouls[di], g$fouls_l2[di]),
+       start_type = g$start_type[a], off_to_left = g$to_left[oi])
+}
+
+SHOTS <- c("fg2a", "fg3a")
+
+# A forced shot: a 2 or a 3, or one of their exact outcomes (e.g. "fg3_miss")
+forced_shot <- function(act) !is.na(act) && act %in% c(SHOTS, unlist(ACTIONS[SHOTS]))
+
+# League odds of each shot's outcomes (from rates.rds)
+league_shot_odds <- function(m) {
+  if (is.null(m$shot_odds)) stop("These models have no league shot odds (rates.rds); ",
+                                 "refit with data-raw/fit_models.R or use odds = \"model\".", call. = FALSE)
+  m$shot_odds
+}
+
+# Duration probabilities of a forced shot: the same for a 2 or a 3, made or missed. The model's
+# duration for each shot outcome, averaged with the league odds (half 2s, half 3s). Conditioning
+# on the outcome would bring back the selection that league odds remove: late in the clock,
+# real 3s (heaves) beat the buzzer far more often than 2s, and those cells are thin and noisy.
+shot_clock_probs <- function(d, m) {
+  w <- unlist(unname(league_shot_odds(m))) / 2
+  # games in a batch often share a state (e.g. eWP copies of one state): predict each distinct
+  # state once, for all shot outcomes in a single call
+  X <- x_outcome(d)
+  key <- do.call(paste, as.data.frame(X))
+  first <- !duplicated(key)
+  Xu <- X[first, , drop = FALSE]
+  nu <- nrow(Xu)
+  p <- predict_probs(m$duration, do.call(rbind, lapply(names(w), function(o) {
+    cbind(Xu, one_hot(rep(o, nu), OUTCOMES, "o_"))
+  })))
+  pu <- Reduce(`+`, lapply(seq_along(w), function(k) w[[k]] * p[(k - 1) * nu + seq_len(nu), , drop = FALSE]))
+  pu[match(key, key[first]), , drop = FALSE]
+}
+
+# Outcome probabilities (unnormalised, one row per game). Shot clock: a team can't run out a
+# period with more than 24 s left. A forced action keeps only its outcomes, in the model's
+# proportions, or for a forced shot with odds = "league", the league's.
+outcome_probs <- function(d, act, m, odds = "league") {
+  n <- length(d$secs_left)
+  if (!is.na(act) && odds == "league" && act %in% SHOTS) {
+    lg <- league_shot_odds(m)[[act]]
+    po <- matrix(0, n, length(OUTCOMES))
+    po[, match(names(lg), OUTCOMES)] <- rep(lg, each = n)
+    return(po)
+  }
+  po <- predict_probs(m$outcome, x_outcome(d))
+  po[d$secs_left > 24, OUTCOMES == "end_period"] <- 0
+  if (!is.na(act)) po[, !OUTCOMES %in% c(ACTIONS[[act]], act)] <- 0
+  po
+}
+
 #' One row per simulated game
 #' @param g Output of [simulate_games()].
 #' @return A data.table: final scores, number of periods, and box-score counts.
@@ -171,10 +238,11 @@ game_summary <- function(g) {
 #' sim_pbp(state, until = "possession")
 #' sim_pbp(state, until = "possession", action = "fg3a", possessions = 2)
 #' @export
-sim_pbp <- function(state = NULL, until = c("game", "possession"), action = NULL, possessions = 1) {
+sim_pbp <- function(state = NULL, until = c("game", "possession"), action = NULL, possessions = 1,
+                    odds = c("league", "model")) {
   g <- if (is.null(state)) new_games(1) else games_from_states(state)
   simulate_games(g, until = until, pbp = TRUE, action = action,
-                 possessions = possessions)$pbp[, game := NULL][]
+                 possessions = possessions, odds = odds)$pbp[, game := NULL][]
 }
 
 #' Simulate many games from tip-off
@@ -195,16 +263,66 @@ sim_games <- function(n = 1000) {
 #' @return [game_summary()] of the simulations.
 #' @export
 sim_from_state <- function(state, n = 1000, until = c("game", "possession"), action = NULL,
-                           possessions = 1) {
+                           possessions = 1, odds = c("league", "model")) {
   game_summary(simulate_games(games_from_states(state, n), until = until, action = action,
-                              possessions = possessions))
+                              possessions = possessions, odds = odds))
 }
 
 # Simulate n copies of the next `possessions` possessions from a state. One row per simulation:
-# the path of events, points scored, and NN win prob after the path.
-run_paths <- function(state, action, possessions, n) {
+# the path of events, points scored, NN win prob after the path, and its weight `w` (the
+# weights sum to 1).
+#
+# When the first action is a shot ("fg2a" / "fg3a"), what happens in that segment is not drawn
+# at random. The odds of each branch are known exactly: the shot's outcome (make, miss, and-1 or
+# shooting foul, at `odds`), then its free throws (league FT%) and the rebound after a miss
+# (league OREB rate). Each branch gets its own batch of simulations (about n x its probability)
+# and the batch is weighted by that probability. Only the clock and the later possessions are
+# still random, which removes most of the run-to-run noise in eWP.
+run_paths <- function(state, action, possessions, n, odds = "league", m = nbasim_models()) {
+  first <- action[1]
+  if (is.na(first) || !first %in% SHOTS)
+    return(sim_path_batch(state, action, possessions, n, odds, m)[, w := 1 / n][])
+  b <- shot_branches(state, first, m, odds)
+  rbindlist(lapply(seq_len(nrow(b)), function(i) {
+    n_b <- max(1L, round(n * b$p[i]))
+    fix <- list(ftm_lead = b$ftm_lead[i], last_made = b$last_made[i], oreb = b$oreb[i])
+    sim_path_batch(state, c(b$outcome[i], action[-1]), possessions, n_b, odds, m, fix)[
+      , w := b$p[i] / n_b]
+  }))
+}
+
+# Every way a forced shot's segment can end, with its probability: outcome x free throws x
+# rebound. `NA` columns are left random (they don't apply to that branch).
+shot_branches <- function(state, act, m, odds = "league") {
+  d <- segment_inputs(games_from_states(state), 1L)
+  d$after_timeout <- FALSE                                 # a forced segment never starts with one
+  outs <- ACTIONS[[act]]
+  p_out <- outcome_probs(d, act, m, odds)[1, match(outs, OUTCOMES)]
+  p_out <- p_out / sum(p_out)
+  ft <- m$ft_pct
+  b <- rbindlist(Map(function(o, p_o) {
+    n_ft <- c(fg2_and1 = 1, fg3_and1 = 1, foul_shoot2 = 2, foul_shoot3 = 3)[o]
+    if (is.na(n_ft)) {                                     # no FTs: a make, or a miss and a rebound
+      if (!o %in% c("fg2_miss", "fg3_miss")) return(data.table(outcome = o, p = p_o))
+      r <- m$oreb[sub("_miss", "", o)]
+      return(data.table(outcome = o, oreb = c(TRUE, FALSE), p = p_o * c(r, 1 - r)))
+    }
+    r <- m$oreb["ft"]
+    lead <- 0:(n_ft - 1)                                   # FTs made before the last one
+    b <- CJ(ftm_lead = lead, last = c("make", "oreb", "dreb"))
+    b[, `:=`(outcome = o, last_made = last == "make",
+             oreb = fifelse(last == "make", NA, last == "oreb"),
+             p = p_o * dbinom(ftm_lead, n_ft - 1, ft) *
+               fcase(last == "make", ft, last == "oreb", (1 - ft) * r, default = (1 - ft) * (1 - r)))]
+    b[, last := NULL][]
+  }, outs, p_out), fill = TRUE)
+  for (col in c("ftm_lead", "last_made", "oreb")) if (!col %in% names(b)) b[, (col) := NA]
+  b[p > 0]
+}
+
+sim_path_batch <- function(state, action, possessions, n, odds, m, fix = NULL) {
   g <- simulate_games(games_from_states(state, n), until = "possession", pbp = TRUE,
-                      action = action, possessions = possessions)
+                      action = action, possessions = possessions, odds = odds, m = m, fix = fix)
   p <- g$pbp
   p[, label := paste0("T", offense, " ", event,
                       fifelse(fta > 0, paste0(" ", ftm, "/", fta, " FT"), ""),
@@ -228,9 +346,11 @@ run_paths <- function(state, action, possessions, n) {
 #' sim_paths(state, action = "fg3a", n = 2000)
 #' sim_paths(state, action = c("fg2a", "foul"), possessions = 2, n = 2000)
 #' @export
-sim_paths <- function(state, action = NULL, possessions = 1, n = 10000) {
-  run_paths(state, action, possessions, n)[
-    , .(share = .N / n, pts1 = mean(pts1), pts2 = mean(pts2), ewp1 = mean(ewp)),
+sim_paths <- function(state, action = NULL, possessions = 1, n = 10000,
+                      odds = c("league", "model")) {
+  run_paths(state, action, possessions, n, match.arg(odds))[
+    , .(share = sum(w), pts1 = weighted.mean(pts1, w), pts2 = weighted.mean(pts2, w),
+        ewp1 = weighted.mean(ewp, w)),
     by = path][order(-share)]
 }
 
@@ -248,9 +368,10 @@ sim_paths <- function(state, action = NULL, possessions = 1, n = 10000) {
 #' compare_actions(state, n = 2000)
 #' @export
 compare_actions <- function(state, actions = list(fg2a = "fg2a", fg3a = "fg3a"),
-                            possessions = 1, n = 10000) {
+                            possessions = 1, n = 10000, odds = c("league", "model")) {
+  odds <- match.arg(odds)
   res <- rbindlist(lapply(actions, function(act) {
-    data.table(ewp1 = win_prob(state, act, possessions, n))
+    data.table(ewp1 = win_prob(state, act, possessions, n, odds))
   }), idcol = "action")
   res[order(-ewp1)][, ewp_vs_best := ewp1 - ewp1[1]][]
 }

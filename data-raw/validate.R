@@ -3,6 +3,8 @@
 #   2. final-margin distribution (tests late-game fouling / clock management)
 #   3. win-probability calibration: simulate held-out games forward from real mid-game states
 #   4. close late-game states: does the sim send the right share of games to overtime?
+#   5. late-clock shot timing: how often does a shot in the last 10 s end at 0:00, and is the
+#      2-vs-3 edge at +1 smooth over those seconds?
 # Run from the package root. Loads the package code (rules, feature builders, simulator).
 devtools::load_all(quiet = TRUE)
 suppressMessages({ library(data.table); library(arrow); library(xgboost) })
@@ -69,6 +71,34 @@ g <- simulate_games(games_from_states(close, reps))
 close[, sim_ot := colMeans(matrix(g$period > 4, nrow = reps))]
 cat("\nOvertime rate from Q4 states with <= 2:00 left, by offense's score margin\n")
 print(close[, .(n = .N, actual = mean(went_ot), sim = mean(sim_ot)), keyby = score_diff], digits = 3)
+
+# ---- 5. late-clock shot timing ----
+# Real shots in the last 10 s of any period vs the same states with that shot forced. A forced
+# shot's clock is the same for a 2 or a 3 (see shot_clock_probs()), so the sim is compared with
+# all real shots pooled; the real 2s and 3s are shown to see how far apart they are.
+shots <- seg[secs_left > 0 & secs_left <= 10 & outcome %in% c(ACTIONS$fg2a, ACTIONS$fg3a)]
+shots[, `:=`(sec = ceiling(secs_left), type = fifelse(outcome %in% ACTIONS$fg3a, "fg3a", "fg2a"),
+             at_zero = secs_left - duration <= 0.05)]
+for (a in c("fg2a", "fg3a")) {
+  x <- shots[type == a]
+  g <- simulate_games(games_from_states(x), until = "possession", pbp = TRUE, action = a)
+  first <- g$pbp[, .SD[1], by = game]
+  shots[type == a, sim_at_zero := first$duration >= x$secs_left - 0.05]
+}
+timing <- shots[, .(n = .N, actual = mean(at_zero), sim = mean(sim_at_zero),
+                    actual_2 = mean(at_zero[type == "fg2a"]), actual_3 = mean(at_zero[type == "fg3a"])),
+                keyby = .(secs_left = sec)]
+cat("\nShare of shots that end at 0:00, by seconds left when the segment starts\n")
+print(timing, digits = 3)
+cat(sprintf("  largest |sim - actual|: %.3f\n", timing[, max(abs(sim - actual))]))
+
+up1 <- rbindlist(lapply(10:1, function(t) {
+  r <- compare_actions(game_state(period = 4, secs_left = t, off_score = 101, def_score = 100))
+  data.table(secs_left = t, edge_3_minus_2 = r[action == "fg3a", ewp1] - r[action == "fg2a", ewp1])
+}))
+cat("\neWP of a 3 minus a 2, up 1 with the ball, last 10 s of Q4\n")
+print(up1, digits = 3)
+cat(sprintf("  largest second-to-second jump: %.4f\n", max(abs(diff(up1$edge_3_minus_2)))))
 
 # ---- plots ----
 png("data-raw/output/validation.png", width = 1400, height = 500, res = 110)

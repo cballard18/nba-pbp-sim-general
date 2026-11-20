@@ -4,6 +4,7 @@
 #   3. duration  - how many seconds does it take, given the outcome?           (xgboost, 0..30 s)
 #   4. rebounds  - offensive rebound rate after a miss, by shot type           (league rate)
 #   5. free throws - league FT%                                                 (league rate)
+#   6. shot odds  - make / miss / and-1 / shooting foul of a forced 2 or 3     (league rate)
 # Games are split 85/15; held-out log loss is reported against a no-feature baseline.
 # Run from the package root. Loads the package code (rules, feature builders, simulator).
 devtools::load_all(quiet = TRUE)
@@ -58,9 +59,13 @@ m_outcome <- fit_xgb(x_outcome(seg), match(seg$outcome, OUTCOMES) - 1L, seg$test
 du <- seg[outcome != "end_period"]
 m_duration <- fit_xgb(x_duration(du), du$dur_class, du$test, du$clutch, MAX_DUR + 1, "duration")
 
-# 4-5. league rates
+# 4-6. league rates
 oreb <- seg[!is.na(oreb), .(rate = mean(oreb)), by = shot_kind]
-rates <- list(oreb = setNames(oreb$rate, oreb$shot_kind), ft_pct = readRDS("data-raw/data/constants.rds")$ft_pct)
+shot_odds <- lapply(ACTIONS[c("fg2a", "fg3a")], function(outs) {
+  prop.table(table(factor(seg[outcome %in% outs]$outcome, outs)))[outs] |> unclass() |> c()
+})
+rates <- list(oreb = setNames(oreb$rate, oreb$shot_kind), ft_pct = readRDS("data-raw/data/constants.rds")$ft_pct,
+              shot_odds = shot_odds)
 print(rates)
 
 invisible(xgb.save(m_timeout,  "inst/models/timeout.ubj"))

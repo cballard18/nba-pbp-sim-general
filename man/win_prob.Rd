@@ -4,7 +4,13 @@
 \alias{win_prob}
 \title{Win probability for the team with the ball}
 \usage{
-win_prob(state, action = NULL, possessions = 1, n = 10000)
+win_prob(
+  state,
+  action = NULL,
+  possessions = 1,
+  n = 10000,
+  odds = c("league", "model")
+)
 }
 \arguments{
 \item{state}{A \code{\link[=game_state]{game_state()}}. Team 1 is the team with the ball.}
@@ -21,6 +27,14 @@ segment, then foul on the one after.}
 before stopping (the end of a period always stops).}
 
 \item{n}{Number of simulations.}
+
+\item{odds}{Odds of a forced \code{"fg2a"} / \code{"fg3a"} (make, miss, and-1, shooting foul).
+\code{"league"} (default): league averages, the same at any clock and score. \code{"model"}: the
+outcome model's odds for that clock and score, which late in the clock include heaves and
+end-of-clock shots. Shots the model decides on its own always use the model's odds.
+Either way a forced shot (\code{"fg2a"}, \code{"fg3a"} or one of their exact outcomes) takes the same
+time whatever kind it is and however it ends: the model's duration averaged over all shot
+outcomes.}
 }
 \value{
 Win probability for the team with the ball: one per row of \code{state} without an

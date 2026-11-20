@@ -49,10 +49,11 @@ state_wp <- function(g, i, game_secs, m) {
 #' win_prob(state)
 #' win_prob(state, action = "fg3a", n = 2000)
 #' @export
-win_prob <- function(state, action = NULL, possessions = 1, n = 10000) {
+win_prob <- function(state, action = NULL, possessions = 1, n = 10000,
+                     odds = c("league", "model")) {
   if (is.null(action))
     return(nn_wp(state$off_score - state$def_score, game_secs_left(state$period, state$secs_left),
                  TRUE, nbasim_models()$wp))
   if (nrow(state) != 1) stop("`state` must be a single row when `action` is given.", call. = FALSE)
-  mean(run_paths(state, action, possessions, n)$ewp)
+  run_paths(state, action, possessions, n, match.arg(odds))[, sum(w * ewp)]
 }
