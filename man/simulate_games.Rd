@@ -8,6 +8,8 @@ simulate_games(
   g,
   until = c("game", "possession"),
   pbp = FALSE,
+  action = NULL,
+  possessions = 1,
   m = nbasim_models(),
   max_steps = 3000
 )
@@ -16,16 +18,28 @@ simulate_games(
 \item{g}{Games from \code{\link[=new_games]{new_games()}} or \code{\link[=games_from_states]{games_from_states()}}.}
 
 \item{until}{\code{"game"} plays every game to the final buzzer; \code{"possession"} stops each game
-when the ball changes teams or the period ends.}
+after \code{possessions} changes of possession, or when the period ends.}
 
 \item{pbp}{If \code{TRUE}, also return \code{g$pbp}, one row per simulated segment.}
+
+\item{action}{Force what happens, one entry per segment in order (\code{NA} = the model decides).
+\code{"fg2a"} / \code{"fg3a"}: the offense shoots, and the model picks make, miss, and-1 or shooting
+foul. \code{"turnover"}. \code{"foul"}: the defense fouls on purpose within 1-3 seconds (2 FTs in
+the bonus, otherwise a side-out). Or an exact outcome such as \code{"fg3_miss"}. A forced
+segment never starts with a timeout. An offensive rebound or a side-out starts a new
+segment, so e.g. \code{c("fg3a", NA, "foul")} means: shoot a 3, let the model play the next
+segment, then foul on the one after.}
+
+\item{possessions}{With \code{until = "possession"}, how many changes of possession to play
+before stopping (the end of a period always stops).}
 
 \item{m}{Models, by default those shipped with the package.}
 
 \item{max_steps}{Safety cap on loop steps.}
 }
 \value{
-\code{g}, updated: final \code{score} matrix, \code{period}, per-game \code{stats}, and \code{pbp} if asked.
+\code{g}, updated: final \code{score} matrix, \code{period}, per-game \code{stats}, \code{over} (game
+finished), and \code{pbp} if asked.
 }
 \description{
 The engine behind every other function. Many games are simulated side by side: each loop

@@ -26,7 +26,11 @@ sim_pbp()                                 # play-by-play of a full game from tip
 sim_pbp(state)                            # finish the game from the state
 sim_pbp(state, until = "possession")      # just the next possession
 
+sim_pbp(state, until = "possession", action = "fg3a", possessions = 2)  # force a 3PA, then play
+                                                                        # the other team's possession
+sim_paths(state, action = "fg3a")         # every path a 3PA can take: share, points, win prob
 win_prob(state)                           # win probability for the team with the ball
+win_prob(state, action = "fg2a")          # ...if it takes a 2
 sim_from_state(state, n = 10000)          # final score etc. for 10k simulations
 sim_games(1000)                           # 1k full games from tip-off
 ```
@@ -40,9 +44,35 @@ A longer tour: `source(system.file("examples/quickstart.R", package = "nbasim"))
 | `sim_games()` | many games from tip-off, one summary row per game |
 | `sim_from_state()` | many simulations from a state |
 | `win_prob()` | win probability from a state |
+| `sim_paths()` | how often each path of events happens after a (forced) action, and its win probability |
 | `simulate_games()` | the engine: `new_games()` / `games_from_states()` in, with `until` and `pbp` options |
 
 `pbp` columns: period, clock (after the event), offense (1/2), start_type, timeout, duration, event, fta, ftm, rebound, points, score1, score2.
+
+## Choosing an action
+
+`action` (in `sim_pbp()`, `sim_from_state()`, `win_prob()`, `sim_paths()` and `simulate_games()`) forces what happens, and the model plays everything after it:
+
+| action | side | what the model picks |
+|---|---|---|
+| `"fg2a"` / `"fg3a"` | offense | make, miss (then OREB/DREB), and-1, or shooting foul (then FTs) |
+| `"turnover"` | offense | — |
+| `"foul"` | defense | intentional foul within 1-3 s: 2 FTs if in the bonus, otherwise a side-out |
+| an exact outcome, e.g. `"fg3_miss"` | offense | — |
+
+A forced shot keeps the model's own make/miss/foul odds for that clock and score, rescaled to sum to 1. A forced segment never starts with a timeout. Give a vector to force several segments in a row, with `NA` where the model decides. For example, `action = c("fg2a", "foul")` with `possessions = 2` means: team 1 shoots a 2, then team 1 fouls on team 2's possession. An offensive rebound or a side-out starts a new segment, so it takes a slot in the vector. In the play-by-play an intentional foul shows as `foul_intentional` on the row of the team that was fouled (the offense).
+
+```r
+state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
+sim_paths(state, action = "fg3a")
+#>                                path  share  pts1  pts2  win1
+#> 1:                 T1 fg3_miss DREB 0.488     0     0 0.108
+#> 2:                      T1 fg3_make 0.336     3     0 0.629
+#> 3:   T1 fg3_miss OREB > T1 fg2_make 0.038     2     0 0.401
+#> ...
+```
+
+`pts1` / `pts2` are the points scored during the path, and `win1` is team 1's win probability after it.
 
 ## How it works
 

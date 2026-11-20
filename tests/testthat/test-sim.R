@@ -32,3 +32,44 @@ test_that("win probability is sensible", {
   big_lead <- game_state(period = 4, secs_left = 30, off_score = 110, def_score = 95)
   expect_gt(win_prob(big_lead, n = 500), 0.99)
 })
+
+test_that("a forced shot only produces outcomes of that shot", {
+  set.seed(5)
+  state <- game_state(period = 3, secs_left = 300, off_score = 70, def_score = 72)
+  g <- simulate_games(games_from_states(state, 500), until = "possession", pbp = TRUE, action = "fg3a")
+  first <- g$pbp[, .SD[1], by = game]
+  expect_true(all(first$event %in% ACTIONS$fg3a))
+  expect_false(any(first$timeout))
+  expect_gt(mean(first$event == "fg3_make"), 0.25)
+  expect_lt(mean(first$event == "fg3_make"), 0.45)
+  expect_error(sim_pbp(state, action = "dunk"), "Unknown action")
+})
+
+test_that("an intentional foul is quick and gives FTs in the bonus", {
+  set.seed(6)
+  state <- game_state(period = 4, secs_left = 20, off_score = 103, def_score = 100, def_fouls = 5)
+  g <- simulate_games(games_from_states(state, 200), until = "possession", pbp = TRUE, action = "foul")
+  first <- g$pbp[, .SD[1], by = game]
+  expect_true(all(first$event == "foul_intentional"))
+  expect_true(all(first$duration >= 1 & first$duration <= 3))
+  expect_true(all(first$fta == 2))
+})
+
+test_that("possessions = 2 plays both teams' possessions", {
+  set.seed(7)
+  state <- game_state(period = 2, secs_left = 400, off_score = 50, def_score = 48)
+  for (i in 1:20) {
+    p <- sim_pbp(state, until = "possession", action = "fg2a", possessions = 2)
+    expect_true(p$event[1] %in% ACTIONS$fg2a)
+    expect_equal(sum(diff(p$offense) != 0), 1)            # exactly one hand-off inside the window
+  }
+})
+
+test_that("path breakdown covers every simulation", {
+  set.seed(8)
+  state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
+  paths <- sim_paths(state, action = "fg3a", n = 1000)
+  expect_equal(sum(paths$share), 1)
+  expect_true(all(paths$win1 >= 0 & paths$win1 <= 1))
+  expect_equal(paths[path == "T1 fg3_make", pts1], 3)
+})

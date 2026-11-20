@@ -13,4 +13,5 @@
 
 .datatable.aware <- TRUE
 
-utils::globalVariables(c("game", "clock"))
+utils::globalVariables(c("game", "clock", "label", "offense", "event", "fta", "ftm", "rebound",
+                         "path", "pts1", "pts2", "win", "share"))

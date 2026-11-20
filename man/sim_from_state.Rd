@@ -4,7 +4,13 @@
 \alias{sim_from_state}
 \title{Simulate many games from a game state}
 \usage{
-sim_from_state(state, n = 1000, until = c("game", "possession"))
+sim_from_state(
+  state,
+  n = 1000,
+  until = c("game", "possession"),
+  action = NULL,
+  possessions = 1
+)
 }
 \arguments{
 \item{state}{A \code{\link[=game_state]{game_state()}}. Team 1 is the team with the ball.}
@@ -12,7 +18,18 @@ sim_from_state(state, n = 1000, until = c("game", "possession"))
 \item{n}{Number of simulations.}
 
 \item{until}{\code{"game"} plays every game to the final buzzer; \code{"possession"} stops each game
-when the ball changes teams or the period ends.}
+after \code{possessions} changes of possession, or when the period ends.}
+
+\item{action}{Force what happens, one entry per segment in order (\code{NA} = the model decides).
+\code{"fg2a"} / \code{"fg3a"}: the offense shoots, and the model picks make, miss, and-1 or shooting
+foul. \code{"turnover"}. \code{"foul"}: the defense fouls on purpose within 1-3 seconds (2 FTs in
+the bonus, otherwise a side-out). Or an exact outcome such as \code{"fg3_miss"}. A forced
+segment never starts with a timeout. An offensive rebound or a side-out starts a new
+segment, so e.g. \code{c("fg3a", NA, "foul")} means: shoot a 3, let the model play the next
+segment, then foul on the one after.}
+
+\item{possessions}{With \code{until = "possession"}, how many changes of possession to play
+before stopping (the end of a period always stops).}
 }
 \value{
 \code{\link[=game_summary]{game_summary()}} of the simulations.

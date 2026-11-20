@@ -4,6 +4,19 @@
 OUTCOMES <- c("fg2_make", "fg2_miss", "fg3_make", "fg3_miss", "fg2_and1", "fg3_and1",
               "foul_shoot2", "foul_shoot3", "foul_nonshoot", "turnover", "end_period")
 
+# Actions a user can force on a segment, and the outcomes the model may pick for each.
+# "foul" is an intentional foul by the defense: a quick non-shooting foul (2 FTs in the bonus).
+ACTIONS <- list(fg2a = c("fg2_make", "fg2_miss", "fg2_and1", "foul_shoot2"),
+                fg3a = c("fg3_make", "fg3_miss", "fg3_and1", "foul_shoot3"),
+                turnover = "turnover",
+                foul = "foul_nonshoot")
+
+check_action <- function(action) {
+  bad <- setdiff(action[!is.na(action)], c(names(ACTIONS), setdiff(OUTCOMES, "end_period")))
+  if (length(bad)) stop("Unknown action: ", paste(bad, collapse = ", "), ". Use NA (model decides), ",
+                        paste(names(ACTIONS), collapse = ", "), " or an exact outcome.", call. = FALSE)
+}
+
 # How a segment began
 START_TYPES <- c("period_start", "after_make", "after_dreb", "after_oreb", "after_turnover", "sideout")
 

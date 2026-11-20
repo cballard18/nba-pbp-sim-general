@@ -4,12 +4,20 @@
 \alias{win_prob}
 \title{Win probability for the team with the ball}
 \usage{
-win_prob(state, n = 10000)
+win_prob(state, n = 10000, action = NULL)
 }
 \arguments{
 \item{state}{A \code{\link[=game_state]{game_state()}}. Team 1 is the team with the ball.}
 
 \item{n}{Number of simulations.}
+
+\item{action}{Force what happens, one entry per segment in order (\code{NA} = the model decides).
+\code{"fg2a"} / \code{"fg3a"}: the offense shoots, and the model picks make, miss, and-1 or shooting
+foul. \code{"turnover"}. \code{"foul"}: the defense fouls on purpose within 1-3 seconds (2 FTs in
+the bonus, otherwise a side-out). Or an exact outcome such as \code{"fg3_miss"}. A forced
+segment never starts with a timeout. An offensive rebound or a side-out starts a new
+segment, so e.g. \code{c("fg3a", NA, "foul")} means: shoot a 3, let the model play the next
+segment, then foul on the one after.}
 }
 \value{
 Share of simulations won by the team with the ball.
@@ -18,5 +26,7 @@ Share of simulations won by the team with the ball.
 Win probability for the team with the ball
 }
 \examples{
-win_prob(game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103), n = 2000)
+state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
+win_prob(state, n = 2000)
+win_prob(state, n = 2000, action = "fg3a")
 }

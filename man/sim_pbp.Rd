@@ -4,12 +4,28 @@
 \alias{sim_pbp}
 \title{Play-by-play for one simulated game}
 \usage{
-sim_pbp(state = NULL, until = c("game", "possession"))
+sim_pbp(
+  state = NULL,
+  until = c("game", "possession"),
+  action = NULL,
+  possessions = 1
+)
 }
 \arguments{
 \item{state}{\code{NULL} for a full game from tip-off, or a \code{\link[=game_state]{game_state()}}.}
 
-\item{until}{\code{"game"} to finish the game, \code{"possession"} for just the next possession.}
+\item{until}{\code{"game"} to finish the game, \code{"possession"} for just the next possession(s).}
+
+\item{action}{Force what happens, one entry per segment in order (\code{NA} = the model decides).
+\code{"fg2a"} / \code{"fg3a"}: the offense shoots, and the model picks make, miss, and-1 or shooting
+foul. \code{"turnover"}. \code{"foul"}: the defense fouls on purpose within 1-3 seconds (2 FTs in
+the bonus, otherwise a side-out). Or an exact outcome such as \code{"fg3_miss"}. A forced
+segment never starts with a timeout. An offensive rebound or a side-out starts a new
+segment, so e.g. \code{c("fg3a", NA, "foul")} means: shoot a 3, let the model play the next
+segment, then foul on the one after.}
+
+\item{possessions}{With \code{until = "possession"}, how many changes of possession to play
+before stopping (the end of a period always stops).}
 }
 \value{
 A data.table with one row per segment: period, clock (after the event), offense
@@ -23,4 +39,5 @@ sim_pbp()
 state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
 sim_pbp(state)
 sim_pbp(state, until = "possession")
+sim_pbp(state, until = "possession", action = "fg3a", possessions = 2)
 }
