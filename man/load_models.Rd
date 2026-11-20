@@ -7,7 +7,8 @@
 load_models(dir = system.file("models", package = "nbasim"))
 }
 \arguments{
-\item{dir}{Directory holding \code{timeout.ubj}, \code{outcome.ubj}, \code{duration.ubj} and \code{rates.rds}.}
+\item{dir}{Directory holding \code{timeout.ubj}, \code{outcome.ubj}, \code{duration.ubj}, \code{rates.rds} and
+\code{wp_nn.rds}.}
 }
 \value{
 A list of models and league rates.

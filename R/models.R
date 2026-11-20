@@ -4,7 +4,8 @@
 #' function uses [nbasim_models()], which loads the models shipped with the package once and
 #' caches them.
 #'
-#' @param dir Directory holding `timeout.ubj`, `outcome.ubj`, `duration.ubj` and `rates.rds`.
+#' @param dir Directory holding `timeout.ubj`, `outcome.ubj`, `duration.ubj`, `rates.rds` and
+#'   `wp_nn.rds`.
 #' @return A list of models and league rates.
 #' @export
 load_models <- function(dir = system.file("models", package = "nbasim")) {
@@ -16,7 +17,7 @@ load_models <- function(dir = system.file("models", package = "nbasim")) {
     xgb.model.parameters(model) <- list(nthread = parallel::detectCores())
     model
   })
-  c(m, readRDS(file.path(dir, "rates.rds")))
+  c(m, readRDS(file.path(dir, "rates.rds")), list(wp = readRDS(file.path(dir, "wp_nn.rds"))))
 }
 
 .cache <- new.env(parent = emptyenv())

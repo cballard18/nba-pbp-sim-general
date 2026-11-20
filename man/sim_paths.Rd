@@ -25,8 +25,9 @@ before stopping (the end of a period always stops).}
 \value{
 A data.table, one row per path, most common first: \code{path} (e.g.
 \code{"T1 fg3_miss DREB > T2 turnover"}; team 1 has the ball in \code{state}), \code{share} of
-simulations, \code{pts1} / \code{pts2} scored during the path, and \code{win1}, team 1's win probability
-after that path.
+simulations, \code{pts1} / \code{pts2} scored during the path, \code{ewp1}, team 1's neural net win
+probability right after the path, and \code{win1}, the share of those simulations team 1 went on
+to win.
 }
 \description{
 Simulates \code{n} copies of the next \code{possessions} possessions from a state (with any forced

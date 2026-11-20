@@ -20,7 +20,8 @@
 #' @param m Models, by default those shipped with the package.
 #' @param max_steps Safety cap on loop steps.
 #' @return `g`, updated: final `score` matrix, `period`, per-game `stats`, `over` (game
-#'   finished), and `pbp` if asked.
+#'   finished), and `pbp` if asked. `pbp$wp` is team 1's win probability after each event from
+#'   the neural net (see [nn_win_prob()]), and `wp_delta` its change from the row before.
 #' @export
 simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, action = NULL,
                            possessions = 1, m = nbasim_models(), max_steps = 3000) {
@@ -28,6 +29,7 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
   check_action(action)
   if (is.null(g$over)) g$over <- rep(FALSE, length(g$done))
   changes <- integer(length(g$done))
+  if (pbp) wp0 <- state_wp(g, seq_along(g$done), game_secs_left(g$period, g$secs_left), m)
   log <- list()
   for (step in seq_len(max_steps)) {
     a <- which(!g$done)
@@ -97,13 +99,6 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
                              kind == "miss", "after_dreb", kind == "turnover", "after_turnover",
                              default = "sideout")
     g$secs_left[a] <- clock
-    if (pbp) log[[step]] <- data.table(
-      game = a, period = d$period, clock = clock, offense = off, start_type = d$start_type,
-      timeout = d$after_timeout, duration = dur,
-      event = if (identical(act, "foul")) "foul_intentional" else o, fta = n_ft, ftm = ft_made,
-      rebound = fifelse(kind == "miss" & clock > 0, fifelse(oreb, "offensive", "defensive"), NA_character_),
-      points = pts, score1 = g$score[a, 1], score2 = g$score[a, 2])
-
     s <- cbind(d$start_type %in% c("period_start", "after_make", "after_dreb", "after_turnover"),
                1, o %in% c("fg2_make", "fg2_miss", "fg2_and1"), o %in% c("fg3_make", "fg3_miss", "fg3_and1"),
                o %in% c("fg2_make", "fg3_make", "fg2_and1", "fg3_and1"), n_ft, o == "turnover", oreb,
@@ -132,6 +127,14 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
         g$to_left[ot, ] <- 2
       }
     }
+    if (pbp) log[[step]] <- data.table(
+      game = a, period = d$period, clock = clock, offense = off, start_type = d$start_type,
+      timeout = d$after_timeout, duration = dur,
+      event = if (identical(act, "foul")) "foul_intentional" else o, fta = n_ft, ftm = ft_made,
+      rebound = fifelse(kind == "miss" & clock > 0, fifelse(oreb, "offensive", "defensive"), NA_character_),
+      points = pts, score1 = g$score[a, 1], score2 = g$score[a, 2],
+      wp = state_wp(g, a, game_secs_left(g$period[a], g$secs_left[a]), m))  # state after any period change
+
     if (until == "possession") {
       changes[a] <- changes[a] + (g$off[a] != off)
       g$done[a[changes[a] >= possessions | a %in% e]] <- TRUE
@@ -141,6 +144,7 @@ simulate_games <- function(g, until = c("game", "possession"), pbp = FALSE, acti
     g$pbp <- rbindlist(log)
     setorder(g$pbp, game)
     g$pbp[, clock := sprintf("%d:%04.1f", clock %/% 60, clock %% 60)]
+    g$pbp[, wp_delta := wp - shift(wp, fill = wp0[.BY$game]), by = game]
   }
   g
 }
@@ -209,6 +213,23 @@ win_prob <- function(state, n = 10000, action = NULL) {
   mean(res$score1 > res$score2)
 }
 
+# Simulate n copies of the next `possessions` possessions from a state, then play each to the end.
+# One row per simulation: the path of events, points scored, NN win prob after the path, result.
+run_paths <- function(state, action, possessions, n) {
+  g <- simulate_games(games_from_states(state, n), until = "possession", pbp = TRUE,
+                      action = action, possessions = possessions)
+  p <- g$pbp
+  p[, label := paste0("T", offense, " ", event,
+                      fifelse(fta > 0, paste0(" ", ftm, "/", fta, " FT"), ""),
+                      fifelse(is.na(rebound), "", fifelse(rebound == "offensive", " OREB", " DREB")))]
+  res <- p[, .(path = paste(label, collapse = " > "), ewp = wp[.N]), by = game]
+  res[, `:=`(pts1 = g$score[game, 1] - state$off_score, pts2 = g$score[game, 2] - state$def_score)]
+  g$done <- g$over
+  g$pbp <- NULL
+  g <- simulate_games(g)
+  res[, win := as.numeric(g$score[game, 1] > g$score[game, 2])][]
+}
+
 #' How often each action path happens, and what it does to the game
 #'
 #' Simulates `n` copies of the next `possessions` possessions from a state (with any forced
@@ -217,27 +238,40 @@ win_prob <- function(state, n = 10000, action = NULL) {
 #' @inheritParams sim_from_state
 #' @return A data.table, one row per path, most common first: `path` (e.g.
 #'   `"T1 fg3_miss DREB > T2 turnover"`; team 1 has the ball in `state`), `share` of
-#'   simulations, `pts1` / `pts2` scored during the path, and `win1`, team 1's win probability
-#'   after that path.
+#'   simulations, `pts1` / `pts2` scored during the path, `ewp1`, team 1's neural net win
+#'   probability right after the path, and `win1`, the share of those simulations team 1 went on
+#'   to win.
 #' @examples
 #' state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
 #' sim_paths(state, action = "fg3a", n = 2000)
 #' sim_paths(state, action = c("fg2a", "foul"), possessions = 2, n = 2000)
 #' @export
 sim_paths <- function(state, action = NULL, possessions = 1, n = 10000) {
-  g <- simulate_games(games_from_states(state, n), until = "possession", pbp = TRUE,
-                      action = action, possessions = possessions)
-  p <- g$pbp
-  p[, label := paste0("T", offense, " ", event,
-                      fifelse(fta > 0, paste0(" ", ftm, "/", fta, " FT"), ""),
-                      fifelse(is.na(rebound), "", fifelse(rebound == "offensive", " OREB", " DREB")))]
-  res <- p[, .(path = paste(label, collapse = " > ")), by = game]
-  res[, `:=`(pts1 = g$score[game, 1] - state$off_score, pts2 = g$score[game, 2] - state$def_score)]
+  run_paths(state, action, possessions, n)[
+    , .(share = .N / n, pts1 = mean(pts1), pts2 = mean(pts2), ewp1 = mean(ewp), win1 = mean(win)),
+    by = path][order(-share)]
+}
 
-  g$done <- g$over
-  g$pbp <- NULL
-  g <- simulate_games(g)
-  res[, win := g$score[game, 1] > g$score[game, 2]]
-  res[, .(share = .N / n, pts1 = mean(pts1), pts2 = mean(pts2), win1 = mean(win)),
-      by = path][order(-share)]
+#' Compare actions by expected win probability
+#'
+#' For each action, simulates the next `possessions` possessions `n` times and averages team 1's
+#' neural net win probability after them (eWP), and the share of simulations team 1 went on to
+#' win when every game is played out.
+#'
+#' @inheritParams sim_from_state
+#' @param actions A named list of actions (each one as in [simulate_games()]'s `action`; `NA`
+#'   lets the model decide).
+#' @return A data.table, one row per action: `ewp1` and `win1`, and `ewp_vs_model` /
+#'   `win_vs_model`, their change against the first action (by default: the model decides).
+#' @examples
+#' state <- game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103)
+#' compare_actions(state, n = 2000)
+#' @export
+compare_actions <- function(state, actions = list(model = NA, fg2a = "fg2a", fg3a = "fg3a"),
+                            possessions = 1, n = 10000) {
+  res <- rbindlist(lapply(actions, function(act) {
+    r <- run_paths(state, act, possessions, n)
+    data.table(ewp1 = mean(r$ewp), win1 = mean(r$win))
+  }), idcol = "action")
+  res[, `:=`(ewp_vs_model = ewp1 - ewp1[1], win_vs_model = win1 - win1[1])][]
 }

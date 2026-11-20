@@ -31,6 +31,8 @@ sim_pbp(state, until = "possession", action = "fg3a", possessions = 2)  # force 
 sim_paths(state, action = "fg3a")         # every path a 3PA can take: share, points, win prob
 win_prob(state)                           # win probability for the team with the ball
 win_prob(state, action = "fg2a")          # ...if it takes a 2
+nn_win_prob(state)                        # instant win probability from the neural net
+compare_actions(state)                    # eWP of letting the model decide vs a 2 vs a 3
 sim_from_state(state, n = 10000)          # final score etc. for 10k simulations
 sim_games(1000)                           # 1k full games from tip-off
 ```
@@ -44,10 +46,12 @@ A longer tour: `source(system.file("examples/quickstart.R", package = "nbasim"))
 | `sim_games()` | many games from tip-off, one summary row per game |
 | `sim_from_state()` | many simulations from a state |
 | `win_prob()` | win probability from a state |
+| `nn_win_prob()` | win probability from the neural net ensemble (no simulation) |
+| `compare_actions()` | eWP of each action, and its change against letting the model decide |
 | `sim_paths()` | how often each path of events happens after a (forced) action, and its win probability |
 | `simulate_games()` | the engine: `new_games()` / `games_from_states()` in, with `until` and `pbp` options |
 
-`pbp` columns: period, clock (after the event), offense (1/2), start_type, timeout, duration, event, fta, ftm, rebound, points, score1, score2.
+`pbp` columns: period, clock (after the event), offense (1/2), start_type, timeout, duration, event, fta, ftm, rebound, points, score1, score2, wp (team 1's neural net win probability after the event), wp_delta.
 
 ## Choosing an action
 
@@ -72,7 +76,27 @@ sim_paths(state, action = "fg3a")
 #> ...
 ```
 
-`pts1` / `pts2` are the points scored during the path, and `win1` is team 1's win probability after it.
+`pts1` / `pts2` are the points scored during the path. `ewp1` is team 1's neural net win probability right after it, and `win1` is the share of those simulations team 1 won when every game was played out.
+
+## Win probability and eWP
+
+Each play-by-play row has `wp`, team 1's win probability after the event, and `wp_delta`, its change from the row before. They come from the 20-net ensemble of [NBA-Shot-Optimization](https://github.com/cballard18/NBA-Shot-Optimization). Its inputs are margin, seconds left in the game, who has the ball, and the pregame spread. Here the spread is 0, and each prediction is averaged over team 1 at home and team 2 at home, because the simulator has no home court. "Who has the ball" is the team that has it next: after a make, that's the other team. At the end of a period, the row is scored at the start of the next period.
+
+The nets are small enough that `data-raw/import_wp.R` copies their weights into `inst/models/wp_nn.rds` (22 KB) and `R/wp.R` runs them in plain R, so the package needs neither keras nor recipes. The import script checks that the plain-R predictions match keras (largest difference about 2e-7). Rerun it after retraining the ensemble.
+
+`compare_actions()` turns this into a decision table:
+
+```r
+compare_actions(game_state(period = 4, secs_left = 40, off_score = 101, def_score = 103))
+#>    action  ewp1  win1 ewp_vs_model win_vs_model
+#> 1:  model 0.281 0.276        0.000        0.000
+#> 2:   fg2a 0.292 0.287        0.011        0.011
+#> 3:   fg3a 0.310 0.310        0.029        0.034
+```
+
+`ewp1` scores the outcomes with the neural net (the method of the blog post, with the simulator's outcome odds). `win1` plays every game to the end with the simulator alone. The two are independent estimates, and they agree: from that state the net gives 27.7% before the possession, 28.1% on average after it, and the played-out simulations give 28.0%.
+
+The net's possession input is the team with the ball *after* each play-by-play row (after a make: the other team). An earlier version credited the team that made the play, which made having the ball look nearly worthless late in games. The fix is in `get_pbp.R` of the WP repo.
 
 ## How it works
 

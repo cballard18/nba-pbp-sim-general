@@ -39,7 +39,8 @@ before stopping (the end of a period always stops).}
 }
 \value{
 \code{g}, updated: final \code{score} matrix, \code{period}, per-game \code{stats}, \code{over} (game
-finished), and \code{pbp} if asked.
+finished), and \code{pbp} if asked. \code{pbp$wp} is team 1's win probability after each event from
+the neural net (see \code{\link[=nn_win_prob]{nn_win_prob()}}), and \code{wp_delta} its change from the row before.
 }
 \description{
 The engine behind every other function. Many games are simulated side by side: each loop
