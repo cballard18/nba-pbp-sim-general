@@ -1,6 +1,6 @@
 # nbasim
 
-A league-average NBA game simulator at the possession level. A chain of small ML models (the same "ML sub-models + Monte Carlo loop" design as DraftKings' football model) is fit to 2016-17 through 2025-26 play-by-play. Teams and players are not modeled: every team plays like the league average.
+A league-average NBA game simulator at the possession level. A chain of small ML models is fit to 2016-17 through 2025-26 play-by-play. Teams and players are not modeled: every team plays like the league average.
 
 ## Install
 
@@ -106,22 +106,34 @@ The unit is a **segment**: a team's turn with the ball until a shot, turnover, d
 flowchart TD
     start(["Segment starts<br/>period start · after make · after DREB<br/>after turnover · after OREB · side-out"])
     to["Timeout Model<br/><i>only if a timeout is left</i>"]
-    out["Outcome Model<br/><i>11 classes</i>"]
+    out["Outcome Model<br/><i>picks 1 of 11 outcomes</i>"]
     dur["Duration Model<br/><i>game clock, capped by time left</i>"]
+
+    subgraph outcomes ["The 11 outcomes"]
+        make["Made shot<br/><i>fg2_make · fg3_make</i>"]
+        miss["Missed shot<br/><i>fg2_miss · fg3_miss</i>"]
+        and1["And-1<br/><i>fg2_and1 · fg3_and1</i>"]
+        sf["Shooting foul<br/><i>foul_shoot2 · foul_shoot3</i>"]
+        nsf["Non-shooting foul<br/><i>foul_nonshoot</i>"]
+        tov["Turnover<br/><i>turnover</i>"]
+        eop["End of period<br/><i>end_period</i>"]
+    end
+
     bonus{"Defense in<br/>the bonus?"}
     ft["Free Throws<br/><i>league FT% (77.5%)</i>"]
     reb["Rebound<br/><i>league OREB rate by shot type</i>"]
     same(["Same team's ball<br/>new segment"])
     other(["Other team's ball"])
-    pend(["End of period"])
+    pend(["Next period"])
 
-    start --> to --> out --> dur
-    dur -->|"2PT / 3PT MAKE"| other
-    dur -->|"2PT / 3PT MISS"| reb
-    dur -->|"AND-1 (1 FT)<br/>SHOOTING FOUL (2–3 FTs)"| ft
-    dur -->|"NON-SHOOTING FOUL"| bonus
-    dur -->|"TURNOVER"| other
-    dur -->|"END OF PERIOD"| pend
+    start --> to --> out --> dur --> outcomes
+    make --> other
+    miss --> reb
+    and1 -->|"1 FT"| ft
+    sf -->|"2 or 3 FTs"| ft
+    nsf --> bonus
+    tov --> other
+    eop --> pend
     bonus -->|"YES: 2 FTs"| ft
     bonus -->|"NO: side-out"| same
     ft -->|"LAST FT MADE"| other
@@ -130,14 +142,17 @@ flowchart TD
     reb -->|"DEFENSIVE"| other
 
     classDef model fill:#d9534f,stroke:#b52b27,color:#fff
+    classDef outcome fill:#5b8fd9,stroke:#2e6bc0,color:#fff
     classDef rule fill:#f0ad4e,stroke:#c9302c,color:#000
     classDef term fill:#d3d3d3,stroke:#999,color:#000
     class to,out,dur model
+    class make,miss,and1,sf,nsf,tov,eop outcome
     class bonus,ft,reb rule
     class start,same,other,pend term
+    style outcomes fill:#eef3fb,stroke:#5b8fd9
 ```
 
-Red boxes are xgboost models, orange boxes are coded rules and league rates, and grey boxes are where a segment starts or ends. After every segment the score, team fouls, timeouts and clock are updated. A period also ends whenever the clock reaches 0.
+Red boxes are xgboost models, blue boxes are the outcome model's 11 classes (2PT and 3PT versions share a box), orange boxes are coded rules and league rates, and grey boxes are where a segment starts or ends. After every segment the score, team fouls, timeouts and clock are updated. A period also ends whenever the clock reaches 0.
 
 1. **Timeout?** xgboost, binary. Only allowed if the team has a timeout left.
 2. **Outcome**, xgboost with 11 classes: 2PT/3PT make/miss, 2PT/3PT and-1, shooting foul (2 or 3 FTs), non-shooting foul, turnover, end of period.
@@ -175,7 +190,5 @@ The pipeline scripts call `devtools::load_all()`, so model training and the simu
 ## Known simplifications
 
 - **No home-court advantage.** No team or player strength, and no era adjustment (all seasons pooled), so game-to-game spread in totals and pace is smaller than in real games.
-- **2015-16 is excluded:** its play-by-play has no offense column.
 - **FT% and offensive rebound rates are constants.** Late-game intentional misses aren't modeled, so close-game OT runs a bit low.
 - **Ignored entirely:** technical fouls (about 0.5 points per game) and jump-ball possession changes.
-- **Rule changes are pooled.** The timeout model trains on 2017-18 onward only, because timeout rules differ before that.
